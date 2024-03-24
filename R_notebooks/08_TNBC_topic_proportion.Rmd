@@ -1,0 +1,204 @@
+---
+  title: "Empricial_Bayesian"
+author: "Xinyue_Cui"
+date: "2024-02-05"
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Library
+```{r warning=FALSE, message=FALSE}
+#library(phyloseq)
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(stringr)
+#library(genefilter) 
+library(rstan)
+library(randomcoloR)
+library(SpatialExperiment)
+#library(DESeq2)
+# library(here)
+``` 
+
+## Dataset
+Load the SPE object.
+```{r}
+load(file = here::here("Output","RData","02_TNBC_spe_LC.rds"))
+spe
+dim(col)
+```
+## Posterior Sampling
+
+Load posterior sampling results of 5 topics using 4 chains and 2000 iterations on the dataset.
+
+```{r}
+source(here::here("R_notebooks", 
+                  "06_LDA_scripts", "06_LDA_analysis.R"))
+
+TNBC_LDA_5_2000 <- LDA_analysis(
+  spe = spe,
+  SampleID_name = "sample_id",
+  cellType_name = "mm",
+  K = 5,
+  alpha = 0.8,
+  gamma = 0.8,
+  iter = 2000,
+  chain = 4,
+  col_names_theta_all = c("iteration", "Sample", "Topic", "topic.dis"),
+  col_names_beta_hat = c("iterations", "Topic", "Cell.Type", "beta_h"),
+  stan_file_path = here::here("R_notebooks", "06_LDA_scripts", "06_lda.stan"),
+  load_file = TRUE,
+  save_file = FALSE,
+  file_default = TRUE,
+  file_fold = "05_LDA_multiChains"
+)
+```
+## Cell Type Proportion in each Topics
+
+```{r}
+beta_hat <- TNBC_LDA_5_2000$beta_aligned
+dim(beta_hat)
+dimnames(beta_hat)
+```
+
+```{r}
+Cluster_prop_all_iterations <- function(beta_hat) {
+  iterations <- dim(beta_hat)[1]  # Number of iterations
+  K <- dim(beta_hat)[2]  # Number of topics
+  num_cluster <- dim(beta_hat)[3]  # Number of clusters
+
+  # Initialize a list to store dataframes for each iteration
+  cluster_prop_list <- vector("list", iterations)
+
+  # Loop over each iteration
+  for (iter in 1:iterations) {
+    # Initialize a matrix to store topic proportions for this iteration
+    iter_data <- matrix(nrow = num_cluster, ncol = K)
+    
+    # Loop over each topic to fill in the matrix
+    for (k in 1:K) {
+      iter_data[, k] <- beta_hat[iter, k, ]
+    }
+    
+    # Convert the matrix to a dataframe
+    iter_df <- as.data.frame(iter_data)
+    
+    # Set column and row names
+    colnames(iter_df) <- dimnames(beta_hat)[[2]]
+    rownames(iter_df) <- dimnames(beta_hat)[[3]]
+    
+    # Add the dataframe to the list
+    cluster_prop_list[[iter]] <- cbind ("cell_type" =dimnames(beta_hat)[[3]],iter_df)
+
+  }
+
+  return(cluster_prop_list)
+}
+
+# Call the function with your beta_hat array
+cluster_prop_list <- Cluster_prop_all_iterations(beta_hat)
+length(cluster_prop_list)
+cluster_prop_list[[2]]
+```
+
+```{r}
+spatial_compartment <- function(spe, beta_hat_list, cellTypeCol = "mm") {
+  
+  cell_cluster <- data.frame(sample_id = spe$sample_id,
+                             cell_id = dimnames(assay(spe))[[2]],
+                             cell_type = spe$mm,
+                             cell_size = spe$cellSize,
+                             spatialCoords(spe)
+                             )
+  results_list <- vector("list", length(beta_hat_list))
+  
+  for (i in (1:10)) {
+    # Get the topic proportion for the ith iteration
+    celltype_prop <- beta_hat_list[[i]]
+    # tumor_not <- factor(ifelse(cell_cluster == "Other", 1, 0)[, 2])
+    iteration_result <- cell_cluster %>%
+                  left_join(celltype_prop, by = cellTypeCol)
+    results_list[[i]] <- iteration_result
+  }
+  return(results_list)
+}
+```
+
+```{r}
+# Generate the list of topic proportion dataframes for each iteration
+beta_hat_list <- Cluster_prop_all_iterations(beta_hat)
+# Call the modified spatial_compartment function
+spa_list <- spatial_compartment(spe, beta_hat_list, cellTypeCol = "cell_type")
+```
+
+```{r}
+length(spa_list)
+spa_list[1]
+```
+
+For the mean of beta
+```{r}
+Cluster_prop_mean <- function(beta_hat) {
+  iterations <- dim(beta_hat)[1]  # Number of iterations
+  K <- dim(beta_hat)[2]  # Number of topics
+  num_cluster <- dim(beta_hat)[3]  # Number of clusters
+
+  # Initialize an accumulator matrix to store the sum of topic proportions
+  accumulator <- matrix(0, nrow = num_cluster, ncol = K)
+  
+  # Loop over each iteration
+  for (iter in 1:iterations) {
+    # Loop over each topic and cluster to accumulate the sums
+    for (k in 1:K) {
+      accumulator[, k] <- accumulator[, k] + beta_hat[iter, k, ]
+    }
+  }
+  
+  # Compute the mean by dividing the accumulator by the number of iterations
+  mean_matrix <- accumulator / iterations
+  
+  # Convert the mean matrix to a dataframe
+  mean_df <- as.data.frame(mean_matrix)
+  
+  # Set column and row names
+  colnames(mean_df) <- dimnames(beta_hat)[[2]]
+
+  mean_df <- cbind ("cell_type" =dimnames(beta_hat)[[3]],mean_df)
+  return(mean_df)
+}
+
+# Call the function with your beta_hat array
+mean_cluster_prop <- Cluster_prop_mean(beta_hat)
+print(mean_cluster_prop)
+
+```
+
+
+```{r}
+mean_result <-  cbind(TNBC, cell_id = dimnames(assay(spe))[[2]] ) %>%left_join(mean_cluster_prop, by = c("mm" = "cell_type"))
+```
+## For patient 4
+```{r}
+mean_result_4 <- mean_result[mean_result$sample_id == '4', ]
+
+ggplot(mean_result_4 , aes(x = centroidX, y = centroidY, color = topic_assign)) +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "Centroid X", y = "Centroid Y", color = "Topic Assign") +
+  theme(legend.position = "right")
+
+```
+## For patient 12
+```{r}
+mean_result_12 <- mean_result[mean_result$sample_id == '12', ]
+
+ggplot(mean_result_12 , aes(x = centroidX, y = centroidY, color = topic_assign)) +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "Centroid X", y = "Centroid Y", color = "Topic Assign") +
+  theme(legend.position = "right")
+
+```

@@ -1,0 +1,200 @@
+---
+title: "MB_Xeno Linear Mixed Model"
+author: "Xinyue_Cui"
+date: "2023-10-07"
+output: html_document
+---
+# packages
+```{r}
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(cytomapper)
+library(ggplot2)
+library(formattable)
+library(magrittr)
+library(lme4)
+library(car)
+```
+
+# The dataset TNBC
+```{r}
+TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
+TNBC$sample_id <- as.factor(TNBC$sample_id )
+TNBC$mm <- as.factor(TNBC$mm )
+TNBC$cell_id<- paste(TNBC$ImageNb, TNBC$cellLabelInImage, sep="_")
+colnames(TNBC)
+```
+
+```{r}
+table(TNBC$sample_id,TNBC$LATERAL)
+table(TNBC$sample_id,TNBC$RECURRENCE_LABEL)
+table(TNBC$sample_id,TNBC$STAGE)
+```
+generate contingency tables to examine the relationship between the 'tissue_id' and three other variables: 'BlockID_1', 'BlockID_2', and 'FOV', within the 'MB_Xeno' dataset
+
+#get the subset
+```{r}
+# Selecting the desired columns
+subset_MB_Xeno <- MB_Xeno %>%
+  select(sample_id, treatment_id,tissue_id, dsDNA_asinh_znorm)
+head(subset_MB_Xeno)
+summary(subset_MB_Xeno)
+
+# Convert the class of treatment_id and tissue_id column to factor
+
+# MB_Xeno$treatment_id <- as.factor(as.character(MB_Xeno$treatment_id))
+# MB_Xeno$tissue_id <- as.factor(as.character(MB_Xeno$tissue_id))
+# convert the class of several variables in the data frame MB_Xeno to factors simultaneously
+MB_Xeno <- MB_Xeno %>% 
+  mutate_at(vars(sample_id, raw_id, experiment_id, treatment_id,condition, mouse_id, unique_ID, cluster_id, tissue_id), as.factor)
+str(MB_Xeno)
+```
+
+```{r}
+# get a distribution plot of dsDNA_asinh_znorm
+ggplot(MB_Xeno, aes(x = dsDNA_asinh_znorm)) +
+  geom_density(fill = "blue", alpha = 0.5) +
+  xlim(0, 1) +
+  labs(title = "Density Plot of dsDNA_asinh_znorm ",
+       x = "Variable Value",
+       y = "Density")
+
+```
+# logistic transformation of all protein markers
+```{r}
+MB_Xeno_logit <- MB_Xeno
+#Logistic transformation of dsDNA_asinh_znorm
+MB_Xeno_logit$logit.dsDNA_asinh_znorm <- log(MB_Xeno_logit$dsDNA_asinh_znorm/(1-MB_Xeno_logit$dsDNA_asinh_znorm))
+# View the subset data
+head(MB_Xeno_logit)
+
+# Convert factor or character column to numeric
+MB_Xeno_logit$logit.dsDNA_asinh_znorm <- as.numeric(as.character(MB_Xeno_logit$logit.dsDNA_asinh_znorm))
+# Check for NAs or infinite values
+sum(is.na(MB_Xeno_logit$logit.dsDNA_asinh_znorm))
+sum(is.infinite(MB_Xeno_logit$logit.dsDNA_asinh_znorm))
+min(MB_Xeno_logit$logit.dsDNA_asinh_znorm)
+max(MB_Xeno_logit$logit.dsDNA_asinh_znorm)
+# Remove rows with infinite values in the logit.dsDNA_asinh_znorm column
+MB_Xeno_logit <- MB_Xeno_logit[!is.infinite(MB_Xeno_logit$logit.dsDNA_asinh_znorm), ]
+# get a distribution plot of log.dsDNA
+ggplot(MB_Xeno_logit, aes(x = logit.dsDNA_asinh_znorm)) +
+  geom_density(fill = "blue", alpha = 0.5)  +
+  labs(title = "Density Plot of logistic transformation of dsDNA_asinh_znorm ",
+       x = "Variable Value",
+       y = "Density")
+```
+
+
+```{r}
+class(MB_Xeno_logit$treatment_id)
+MB_Xeno_logit$treatment_id <- as.factor(as.character(MB_Xeno_logit$treatment_id))
+MB_Xeno_logit$mouse_id <- as.factor(as.character(MB_Xeno_logit$mouse_id))
+MB_Xeno_logit$tissue_id <- as.factor(as.character(MB_Xeno_logit$tissue_id))
+```
+
+```{r}
+MB_Xeno.lme1 <- lmer(logit.dsDNA_asinh_znorm ~ treatment_id + ( treatment_id| tissue_id ), data= MB_Xeno_logit  )
+ranef(MB_Xeno.lme1)
+fixef(MB_Xeno.lme1)
+summary(MB_Xeno.lme1)
+#check linearity
+plot(MB_Xeno.lme1, type="p") 
+#check independence of observations
+residuals_list <- residuals(MB_Xeno.lme1, type="deviance")
+plot(residuals_list ~ tissue_id, data= MB_Xeno_logit, ylab="Residuals", xlab="Time or Sequence")
+# Homoscedasticity: Residuals should have constant variance across fitted values.
+plot(MB_Xeno.lme1, type="p")
+# Normally Distributed Residuals: The histogram should look roughly bell-shaped, and points in the Q-Q plot should fall roughly along the straight line.
+hist(residuals(MB_Xeno.lme1))
+qqnorm(residuals(MB_Xeno.lme1))
+qqline(residuals(MB_Xeno.lme1))
+
+# Appropriate Model Specification:the smaller the AIC,BIC,likelihood ratio test, the better the model
+AIC(MB_Xeno.lme1)
+BIC(MB_Xeno.lme1)
+```
+
+```{r}
+pred_val <- predict(MB_Xeno.lme1, newdata=MB_Xeno_logit)
+MB_Xeno_logit$pred <- pred_val
+head(MB_Xeno_logit) 
+# Mean of hat(y*)
+mean(pred_val)
+# Mean of y*
+mean(MB_Xeno_logit$logit.dsDNA_asinh_znorm)
+# Mean of y
+mean(MB_Xeno_logit$dsDNA_asinh_znorm)
+# Mean of hat(y)
+mean(1/(1+exp(-pred_val)))
+```
+
+```{r}
+# Get average logit.dsDNA_asinh_znorm for each tissue
+Avg_y_tissue <- MB_Xeno_logit  %>%
+  group_by(treatment_id, tissue_id) %>%
+  summarise(average_logit.dsDNA_tissue = mean(logit.dsDNA_asinh_znorm, na.rm = TRUE))
+# Get average  logit.dsDNA_asinh_znorm for each sample
+Avg_y_sample <- MB_Xeno_logit  %>%
+  group_by(sample_id,treatment_id, tissue_id) %>%
+  summarise(average_logit.dsDNA_sample = mean(logit.dsDNA_asinh_znorm, na.rm = TRUE))
+```
+
+```{r}
+MB_Xeno_logit$pred <- pred_val
+# Get average predict logit.dsDNA_asinh_znorm within samples for each unique tissue_id
+pred_Avg <- MB_Xeno_logit %>%
+  group_by(treatment_id, tissue_id) %>%
+  summarise(average_pred_tissue = mean(pred, na.rm = TRUE))
+# Get average predict logit.dsDNA_asinh_znorm within samples for each unique sample_id
+pred_Avg_sample <- MB_Xeno_logit %>%
+  group_by(sample_id,treatment_id, tissue_id) %>%
+  summarise(average_pred_sample = mean(pred, na.rm = TRUE))
+```
+```{r}
+Avg_tissue <- Avg_y_tissue
+Avg_tissue$average_pred_tissue <-pred_Avg $average_pred_tissue
+Avg_tissue
+```
+
+# Function to fit and visualize LMM
+```{r}
+fit_lmm <- function(marker, data) {
+  # Logistic transformation
+  MB_Xeno_logit <- MB_Xeno %>%
+    mutate(logit.marker = log(marker/(1-marker)))
+  # Convert factor or character column to numeric
+  MB_Xeno_logit$logit.marker <- as.numeric(as.character(MB_Xeno_logit$logit.marker))
+  # Check for NAs or infinite values
+  sum(is.na(MB_Xeno_logit$logit.marker))
+  sum(is.infinite(MB_Xeno_logit$logit.marker))
+  min(MB_Xeno_logit$logit.marker)
+  max(MB_Xeno_logit$logit.marker)
+  # Remove rows with infinite values in the logit.marker column
+  MB_Xeno_logit <- MB_Xeno_logit[!is.infinite(MB_Xeno_logit$logit.marker), ]
+  # Formula
+  formula = logit.marker ~ treatment_id + ( 1| tissue_id )
+  # Fit LMM
+  model <- lmer(formula, data = MB_Xeno_logit, REML = TRUE)
+  # Print summary
+  model_summary <- summary(model)
+  print(model_summary)
+  # fixef(model) %>% lapply()
+  # ranef(model) %>% lapply()
+  
+  # Plot random effects
+  plot(model, type="p")
+  hist(residuals(model))
+qqnorm(residuals(model))
+qqline(residuals(model))
+
+   return(model_summary) 
+}
+
+# fit_lmm(MB_Xeno$dsDNA_asinh_znorm)
+
+```
+
+
+

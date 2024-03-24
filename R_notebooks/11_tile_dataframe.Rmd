@@ -1,0 +1,121 @@
+---
+title: "Tiles_dataframe"
+author: "Xinyue_Cui"
+date: "2024-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+s_coor <- spatialCoords(spe) |>
+  data.frame()
+
+df <- bind_cols(
+  sample_id = spe$sample_id, 
+  cell_id = dimnames(assay(spe))[[2]], 
+  cell_type = spe$mm,
+  cell_size = spe$cellSize
+  ) |>
+  data.frame() |>
+  cbind(s_coor) |>
+  left_join(beta_median, by = "cell_type") |>
+  mutate(tumor_not = ifelse(cell_type == "Other", 1, 0))
+```
+
+```{r}
+sample_names <- df$sample_id %>%
+  unique() %>%
+  as.list()
+
+ppp_list <- list()
+
+for (i in seq_along(sample_names)) {
+  spe_temp <- spe[ ,spe$sample_id == sample_names[[i]]]
+  centroidX <- spatialCoords(spe_temp)[, 1]
+  centroidY <- spatialCoords(spe_temp)[, 2]
+
+  # Ensure df_temp is not empty
+    ppp_temp <- ppp(
+      centroidX,
+      centroidY,
+      window = owin(
+        c(0, max(centroidX)),  # Correct range for x
+        c(0, max(centroidY))   # Correct range for y
+        ),
+      marks = factor(spe_temp$mm)
+      
+    )
+
+    ppp_list[[i]] <- ppp_temp
+  }
+
+names(ppp_list) <- sample_names
+```
+
+```{r}
+set.seed(123) 
+clusters <- kmeans(cbind(ppp_4$x, ppp_4$y), centers = 10)
+ppp_4$cluster <- as.factor(clusters$cluster)
+```
+
+```{r}
+cell_tile <- data.frame(cell_id = dimnames(assay(spe_4))[[2]],
+                        cell_type = spe_4$mm,
+                        tile_align = ppp_4$cluster)
+cell_tile     
+```
+
+```{r}
+# Extracting cluster centroids
+centroids <- aggregate(cbind(ppp_4$x, ppp_4$y), by=list(ppp_4$cluster), FUN=mean)
+centroids_ppp <- ppp(x=centroids$V1, y=centroids$V2, window=ppp_4$window)
+
+# Voronoi tessellation based on cent'roids
+centroids_voronoi <- dirichlet(centroids_ppp)
+
+```
+
+```{r}
+tile_df  <- data.frame(tile = centroids$Group.1, x = centroids$V1, y = centroids$V1)
+tile_df 
+```
+
+## cell id in each tile (document)
+```{r}
+library(dplyr)
+library(purrr)
+# Group cell_id by 'tile_align' 
+cell_groups <- cell_tile %>%
+  group_by(tile_align) %>%
+  summarize(cells = list(cell_id)) %>%
+  ungroup()
+
+# left Join the groups
+tile_df <- tile_df %>%
+  left_join(cell_groups, by = c("tile" = "tile_align"))
+tile_df 
+```
+
+# cell_type freqency table
+```{r}
+library(dplyr)
+
+cell_type_freq<- list()
+
+for (i in 1:10) {
+  cell_tile_sub <- cell_tile %>% filter(tile_align == i)
+  cell_type_freq[[i]] <- table(cell_tile_sub$cell_type)
+}
+
+
+tile_df <- tile_df %>%
+  mutate(cell_type_count = cell_type_freq)
+tile_df
+```
+
+
+
+

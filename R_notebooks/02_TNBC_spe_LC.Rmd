@@ -1,0 +1,160 @@
+---
+title: "02_TNBC_Spe_LC"
+author: "Xinyue_Cui"
+date: "2024-02-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(cytomapper)
+library(SpatialExperiment)
+```
+
+```{r}
+TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
+TNBC$sample_id <- as.factor(TNBC$sample_id )
+TNBC$mm <- as.factor(TNBC$mm )
+#TNBC$cell_id<- paste(TNBC$ImageNb, TNBC$cellLabelInImage, sep="_")
+```
+# Construct count matrix
+##The aim of this section is to create a count matric to be used in creating the spatial experiment where the rows are the protein markers, and the columns are all cells in the output matrix. There are total of 34 markers in the MB_Xeno dataset, thus, the expected dimension of this count matrix is 34 rows by 179194 columns(cells).
+```{r}
+colnames(TNBC)
+```
+
+#TNBC
+```{r}
+# filter dataset of mouse c2m1 and c5m1
+# MB_Xeno_1n2 <-MB_Xeno  %>% 
+#   filter(mouse_id %in% c('c2m1','c5m1'))
+# dim(MB_Xeno_1n2)
+segments <- split(TNBC, TNBC$sample_id)
+TNBC_1<- segments$`1`
+dim(TNBC_1)
+colnames(TNBC_1)
+# extract the require columns(last 70 columns)[from 21 to ]
+TNBC_1_require <-TNBC_1[, 21:64]
+dim(TNBC_1_require )
+colnames(TNBC_1_require )
+# Transpose 
+test_count_1<- t(TNBC_1_require )
+dim(test_count_1)
+rownames(test_count_1)
+all.equal(rownames(test_count_1), colnames(TNBC_1_require))
+
+```
+#Application to create count matrix
+```{r}
+create_countMat <- function(dataset){
+  # Extract the last 70 columns from the dataset(21 to 90 columns)
+  dataset <- dataset[, 21:64]
+  # De-select metal markers
+  # Transpose the matrix to count matrix
+  count_matrix <- t(dataset)
+  return(count_matrix)
+}
+ test_countMat <- create_countMat(TNBC_1)
+ all.equal(test_countMat, test_count_1)
+
+ count_matrix <- create_countMat(TNBC)
+ dim(count_matrix)
+rownames(count_matrix)
+```
+
+```{r}
+
+TNBC_countMat <- TNBC[, 21:64]%>% 
+    select(-c("Au", "Background", "Fe", "Ca", "Ta", "Si", "P", "Na"))
+count_matrix <- t(TNBC_countMat)
+dim(TNBC_countMat)
+
+colData <- TNBC %>% 
+    select(-rownames(count_matrix))
+dim(colData)
+```
+### for patient 4 (countMat)
+```{r}
+segments <- split(TNBC, TNBC$sample_id)
+TNBC_4<- segments$`4`
+
+TNBC_countMat4 <- TNBC_4[, 21:64]%>% 
+    select(-c("Au", "Background", "Fe", "Ca", "Ta", "Si", "P", "Na"))
+count_matrix4 <- as.data.frame(t(TNBC_countMat4))
+class(count_matrix4)
+dim(count_matrix4)
+```
+
+### for patient 12 (countMat)
+```{r}
+segments <- split(TNBC, TNBC$sample_id)
+TNBC_12<- segments$`12`
+
+TNBC_countMat12 <- TNBC_12[, 21:64]%>% 
+    select(-c("Au", "Background", "Fe", "Ca", "Ta", "Si", "P", "Na"))
+count_matrix12 <- as.data.frame(t(TNBC_countMat12))
+class(count_matrix12)
+dim(count_matrix12)
+```
+
+#Spatial information
+```{r}
+spatialCoords <- as.matrix(colData[, c("centroidX", "centroidY")])
+head(spatialCoords)
+dim(spatialCoords)
+```
+
+```{r}
+# construct spatial experiment
+spe <- SpatialExperiment(
+  assay = count_matrix,
+  colData = colData,
+  spatialCoordsNames = c("centroidX", "centroidY")
+  #spatialCoords = spatialCoords
+)
+
+assayNames(spe) <- "exprs"
+spe
+unique(spe$sample_id)
+str(spe$sample_id)
+```
+
+```{r}
+# adding prefixes for cell identity
+colnames(spe) <- paste0("Cell_", 1:dim(assay(spe))[[2]])
+
+# adding prefixes for sample identity
+spe$sample_id[spe$sample_id %in% 1:9] <- (
+  paste0("0", spe$sample_id[spe$sample_id %in% 1:9])
+   )
+spe$sample_id <- paste0("Sample_", spe$sample_id)
+```
+
+We want to verify if we have added the prefixes correctly.
+```{r}
+# checking sample identity
+unique(spe$sample_id)
+# checking cell identity
+spe
+```
+
+Saving constructed spe object as RDS file.
+```{r}
+save(spe, file = ("/Users/cuixinyue/Desktop/TNBC_analysis/Output/RData/02_TNBC_spe_LC.rds"))
+```
+
+#Images and segmentation masks
+```{r}
+# imgData(spe)
+# getImg(spe)
+```
+
+
+

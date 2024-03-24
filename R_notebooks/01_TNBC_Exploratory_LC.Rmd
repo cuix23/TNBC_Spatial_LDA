@@ -1,0 +1,274 @@
+---
+title: "TNBC_Exploration_XC"
+author: "Xinyue_Cui"
+date: "2024-02-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Libraries
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(formattable)
+library(RColorBrewer)
+library(tidyverse)
+library(cytomapper)
+library(magrittr)
+library(SpatialExperiment)
+library(ggpubr)
+```
+
+
+# The dataset MB_ Xeno
+```{r}
+TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
+head(TNBC)
+colnames(TNBC)
+table(TNBC$sample_id)
+table(TNBC$patient_id)
+dim(TNBC)
+TNBC$sample_id <- as.factor(TNBC$sample_id )
+TNBC$mm <- as.factor(TNBC$mm )
+str(TNBC)
+```
+
+```{r}
+length(unique(TNBC$cluster_id))
+length(unique(TNBC$mm))
+length(unique(TNBC$cell_type))
+table(TNBC$mm, TNBC$cell_type)
+table(TNBC$mm)
+summary(TNBC$Survival_days_capped)
+table(TNBC$Survival_days_capped,TNBC$sample_id )
+```
+```{r}
+hist(TNBC$Survival_days_capped,
+     main = "Histogram of survival days capped",
+     xlab = "Survival days", ylab = "Sample Counts",
+     col = "skyblue")
+```
+
+```{r}
+length(unique(TNBC$sample_id))
+length(unique(TNBC$patient_id))
+length(unique(TNBC$STAGE))
+
+unique_sample <- unique(TNBC$sample_id)
+unique_patient <- unique(TNBC$patient_id)
+unique_image <- unique(TNBC$ImageNb)
+```
+
+##Create a unique variable for cell id
+```{r}
+num_unique_combinations <- TNBC %>%
+  distinct(ImageNb,cellLabelInImage) %>%
+  nrow()
+num_unique_combinations
+
+TNBC$cell_id<- paste(TNBC$ImageNb, TNBC$cellLabelInImage, sep="_")
+length(unique(TNBC$cell_id))
+```
+
+generate contingency tables to examine the relationship between the 'tissue_id' and other variables within the 'MB_Xeno' dataset
+
+# Cell count of each patient
+```{r}
+# Cell numbers in each tiss ue
+p_sample <- ggplot(TNBC, aes(sample_id)) + 
+  geom_bar(fill = "skyblue") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1,size = 8),
+        panel.background = element_rect(fill = "white"))+
+  labs(title ="Number of cells in each sample",x = "sample_id",y = "Cells Count")
+p_sample 
+```
+# cell count of each sample (color by mm)
+```{r}
+library(ggplot2)
+library(ggmosaic)
+
+# Create the mosaic plot
+ggplot(TNBC, aes(x=sample_id, fill=mm)) + 
+  geom_bar() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1,size = 8),
+        panel.background = element_rect(fill = "white"))+
+  labs(x = "tissue_id",y = "Cells Count")
+
+color_set <- c("#66C2A5", "#FF7F00", "#6EAACF", "#A3AC89", "#EC5439", "#41A737", "#3687BC", "#E1917A", "#EE5656",
+               "#B499A5", "#4190AA", "#FE992D","#DCC199", "#6D9E4C", "#929ECA", "#B795C7", "#C09B78", "#F88A8A", "#DC8CC3",
+               "#FDB35B", "#D3A0A2", "#B9C174", "#F5D152", "#B0D84F", "#D68E8E", "#D5D840", "#F9D831",  "#B3B3B3", "#8DD3C7",
+               "#BBE5BE", "#EAF7B6", "#E42123", "#EFEEBC", "#D4D2CC", "#C1B6D3", "#DA9EA9", "#F3867E", 
+               "#D68E8E", "#A4A2B6","#F9D831", "#8EB1C5", "#C2B297", "#F5B368", "#E2C264", "#C4D467", "#A6CEE3","#DDD4B1", 
+               "#FCCDE5", "#EBC87C")
+
+ggplot(TNBC, aes(x = sample_id, fill = mm)) + 
+  geom_bar() +
+  scale_fill_manual(values = color_set) +  # Replace with your chosen colors
+  guides(fill = FALSE) +  # This removes the legend for fill
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1, size = 8),
+        panel.background = element_rect(fill = "white")) +
+  labs(x = "tissue id", y = "Cells Count")
+ 
+```
+
+#mm count
+```{r}
+# cell numbers of each mm
+mm_count <- (
+  dplyr:: count(TNBC, mm) 
+  |> dplyr::rename(count = n) 
+  |> dplyr::mutate(mm = forcats::fct_reorder(mm, count))
+  #|> dplyr::arrange(desc(count)) 
+  |> ggplot2::ggplot(aes(x = mm, y = count)) 
+  + geom_bar(stat = "identity", width = 0.7
+             ,fill="skyblue") 
+             #alpha=.6, width=.5)
+  + coord_flip()
+  + xlab("Cell phenotype") + ylab("Count")
+  + theme(text = element_text(size = 18)) 
+  + ggtitle("")
+  + theme_bw()
+)
+
+# unique cluster id count in each sample
+TNBC_mm_count <- TNBC %>% 
+  group_by(sample_id) %>% 
+  summarise(cell_count = n(),
+            num_unique_mm = length(unique(mm)))
+TNBC_mm_count
+# Barplot for unique cluster id count in each tissue
+TNBC_mm <- ggplot(TNBC_mm_count, aes(x = sample_id, y = num_unique_mm)) + 
+  geom_bar(stat = "identity", fill = "skyblue") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1,size = 8),
+        panel.background = element_rect(fill = "white"))
+
+# Arrange two plot objects on a page.
+arrange <- ggarrange(
+  mm_count, TNBC_mm,
+  labels = c("A", "B"),
+  widths = c(1, 1.5), # Relative widths for the plots. Adjust as needed.
+  heights = c(1.5, 1) # Relative heights for the plots. Adjust as needed.
+) + theme(text = element_text(size = 15))
+arrange
+```
+# Distribution of cell count in samples
+```{r}
+sample_cellcount <- as.data.frame(table(TNBC$sample_id))
+names(sample_cellcount)[1] <- 'sample_id'
+sample_cellcount
+summary(sample_cellcount)
+
+hist(sample_cellcount$Freq,
+     main = "Histogram of cell counts in each sample",
+     xlab = "Sample_id", ylab = "Counts",
+     breaks = 25, xlim = c(1000, 10000), ylim = c(0, 8),
+     col = "skyblue")
+
+
+```
+
+
+
+
+# Distribution of cell count in mm
+```{r}
+mm_cellcount <- as.data.frame(table(TNBC$mm))
+names(mm_cellcount)[1] <- 'mm'
+mm_cellcount
+summary(mm_cellcount)
+
+hist(mm_cellcount$Freq,
+     main = "Histogram of cell counts in each phenotype",
+     xlab = "mm", ylab = "Counts",
+     breaks = 25,
+     col = "skyblue")
+
+
+```
+
+
+# Create a function which give cluster-tissue distribution heatmap
+```{r}
+sample_heatmap <- function(data_segment){
+ p <-data_segment %>% 
+   with(table(sample_id, mm)) %>% 
+  as.data.frame() %>% 
+  mutate(sample_id= paste("Sample", sample_id)) %>%
+  mutate(count = cut(as.numeric(Freq), breaks = c(-1, 1.1, 5.1, 10.1, 
+                                   25.1, 50.1, 100.1, 250.1, 500.1, 1000.1, 2000.1, max(Freq, na.rm = TRUE)+1),
+                     labels = c("0-1", "1-5", "5-10", "10-25", "25-50",
+                                "50-100", "100-250", "250-500", "500-1000", "1000-2000", ">2000"))) %>% 
+  mutate(count = factor(as.character(count), levels = rev(levels(count)))) %>% 
+  
+    ggplot(mapping = aes(x = mm, y = sample_id, fill = count)) +
+    geom_tile(colour = "white", linewidth = 0.3) +
+  
+    # labels
+    guides(fill=guide_legend(title = "Number of Cells \nin Each Sample"))+
+    labs(x = "Cell phenotype", y = "sample id")+
+    scale_y_discrete(expand = c(0, 0)) +
+    scale_x_discrete(expand = c(0, 0)) +
+    
+    # color palette
+    #scale_fill_manual(values = rev(brewer.pal(11, "RdGy")), na.value = "azure4") + #RdGy RdBu
+    scale_fill_manual(values = brewer.pal(11, "RdBu"), na.value = "azure4") + 
+  
+    # theme
+    theme_grey(base_size = 14)+
+    theme(legend.position = "right", legend.direction = "vertical",
+        legend.title = element_text(colour = "black", size = 11),
+        legend.margin = margin(grid::unit(0, "cm")),
+        legend.text = element_text(colour = "grey40", size = 11, face = "bold"),
+        legend.key.height = grid::unit(0.5, "cm"),
+        legend.key.width = grid::unit(0.5, "cm"),
+        axis.text.x = element_text(size = 8, colour = "grey40"),
+        axis.text.y = element_text(size = 8,vjust = 0.2, colour = "grey40"),
+        axis.ticks = element_line(linewidth = 0.7),
+        plot.background = element_blank(),
+        panel.border = element_blank(),
+        plot.margin = margin(0.7, 0.4, 0.1, 0.2, "cm"),
+        plot.title = element_text(colour = "grey40", hjust = 0, size = 11, face = "bold")
+     )+
+    #scale_x_discrete(guide = guide_axis(n.dodge = 2)) # separate x label into two levels
+    scale_x_discrete(guide = guide_axis(angle = 45))
+  return(p)}
+```
+# split this dataset MB_Xeno into 9 segments based on different tissue_id. 
+```{r}
+segments <- split(TNBC, TNBC$sample_id)
+
+sample_heatmap(segments$`1`)
+
+sample_heatmap(TNBC)
+# ggsave("Phenotype_Sampling.jpeg", path="/Users/cuix23/Desktop/", width = 10, height = 7.5)
+```
+
+```{r}
+# Get average logit.dsDNA_asinh_znorm of each sample id for each unique combination of treatement_id and mouse_id
+
+Avg_sample <- MB_Xeno %>%
+  group_by(sample_id) %>%
+  summarize(average_logit.dsDNA_sample = mean(logit.dsDNA_asinh_znorm, na.rm = TRUE))
+
+
+Avg_sample <- MB_Xeno %>%
+  group_by(sample_id,treatment_id, tissue_id) %>%
+  summarize(average_logit.dsDNA_sample = mean(logit.dsDNA_asinh_znorm, na.rm = TRUE))
+Avg_tissue <- MB_Xeno %>%
+  group_by(treatment_id, tissue_id) %>%
+  summarize(average_logit.dsDNA_tissue = mean(logit.dsDNA_asinh_znorm, na.rm = TRUE))
+```
+
+
+
+
+
+

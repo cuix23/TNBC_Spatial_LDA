@@ -1,0 +1,468 @@
+---
+title: "TNBC_Spatial_clustering"
+author: "Xinyue_Cui"
+date: "2024-03-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# packages
+```{r}
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(cytomapper)
+library(ggplot2)
+library(formattable)
+library(magrittr)
+library(lme4)
+library(car)
+```
+
+```{r}
+# install.packages("devtools")
+library(devtools)
+# install.packages("Rcpp")
+library("Rcpp")
+library("RcppArmadillo")
+# Sys.setenv(LD_LIBRARY_PATH = "/Users/cuixinyue/Desktop/libc++.1.dylib")
+```
+
+```{r}
+# install.packages('devtools')
+# Sys.setenv(LD_LIBRARY_PATH = paste("/Library/Developer/CommandLineTools/usr/lib", Sys.getenv("LD_LIBRARY_PATH"), sep = ":"))
+
+# install_github("XiaoZhangryy/iSC.MEB")
+library("iSC.MEB")
+
+# load("DLPFC.rda")
+library("Seurat")
+# load(file = here::here("R_notebooks", "TNBC_topic_proportion.Rmd"))
+# install.packages("DR.SC")
+library("DR.SC")
+
+# if (!requireNamespace("BiocManager", quietly = TRUE)) {
+#     install.packages("BiocManager")
+# }
+# 
+# BiocManager::install("spatialLIBD")
+library("spatialLIBD")
+```
+# Example seqFISH data analysis
+```{r}
+githubURL <- "https://github.com/XiaoZhangryy/iSC.MEB/blob/main/vignettes_data/seqFISH.rda?raw=true"
+download.file(githubURL, "seqFISH.rda", mode = "wb")
+load("seqFISH.rda")
+seuList
+View(seuList)
+```
+
+```{r}
+Genelist <- row.names(seuList[[1]])
+iSCMEBObj <- CreateiSCMEBObject(seuList = seuList, customGenelist = Genelist, verbose = FALSE)
+## check the number of genes/features after filtering step
+iSCMEBObj@seulist
+## Add adjacency matrix list for a iSCMEBObj object to prepare for iSC.MEB model fitting.
+iSCMEBObj <- CreateNeighbors(iSCMEBObj, radius.upper = 10)
+View(iSCMEBObj)
+## run PCA to get low dimensional embeddings
+iSCMEBObj <- runPCA(iSCMEBObj, npcs = 15, pca.method = "APCA")
+## Add a model setting in advance for an iSCMEBObj object. verbose = TRUE helps outputing the
+## information in the algorithm.
+iSCMEBObj <- SetModelParameters(iSCMEBObj, verbose = FALSE, maxIter_ICM = 4, maxIter = 20, coreNum = 4)
+
+```
+
+```{r}
+iSCMEBObj <- iSCMEB(iSCMEBObj, K = 16:19)
+iSCMEBObj <- SelectModel(iSCMEBObj, criteria = "MBIC", c_penalty = 0.2)
+p1 <- SelectKPlot(iSCMEBObj, criteria = "MBIC")
+p1
+```
+```{r}
+LabelList <- lapply(iSCMEBObj@seulist, function(seu) seu@meta.data$celltype_mapped_refined)
+ARI <- function(x, y) mclust::adjustedRandIndex(x, y)
+ari_sections <- sapply(1:3, function(i) ARI(idents(iSCMEBObj)[[i]], LabelList[[i]]))
+ari_all <- ARI(unlist(idents(iSCMEBObj)), unlist(LabelList))
+print(ari_sections)
+print(ari_all)
+```
+```{r}
+p2 <- SpaHeatMap(iSCMEBObj, item = "cluster", plot_type = "Scatter", layout.dim = c(1, 3), nrow.legend = 2,
+    no_axis = TRUE, point_size = 1.5)
+p2
+```
+
+
+
+```{r}
+LabelList <- lapply(iSCMEBObj@seulist, function(seu) seu@meta.data$celltype_mapped_refined)
+ARI <- function(x, y) mclust::adjustedRandIndex(x, y)
+ari_sections <- sapply(1:3, function(i) ARI(idents(iSCMEBObj)[[i]], LabelList[[i]]))
+ari_all <- ARI(unlist(idents(iSCMEBObj)), unlist(LabelList))
+print(ari_sections)
+print(ari_all)
+```
+
+# Example DLPFC data analysis
+
+```{r}
+load("DLPFC.rda")
+seuList  ## a list including two Seurat object
+```
+```{r}
+iSCMEBObj <- CreateiSCMEBObject(seuList = seuList, verbose = FALSE, premin.spots = 0, postmin.spots = 0)
+## check the number of genes/features after filtering step
+iSCMEBObj@seulist
+## Add adjacency matrix list for a iSCMEBObj object to prepare for iSC.MEB model fitting.
+iSCMEBObj <- CreateNeighbors(iSCMEBObj, platform = "Visium")
+## run PCA to get low dimensional embeddings
+iSCMEBObj <- runPCA(iSCMEBObj, npcs = 15, pca.method = "APCA")
+## Add a model setting in advance for an iSCMEBObj object. verbose = TRUE helps outputing the
+## information in the algorithm.
+iSCMEBObj <- SetModelParameters(iSCMEBObj, verbose = TRUE)
+```
+
+```{r} 
+### Given K
+iSCMEBObj <- iSCMEB(iSCMEBObj, K = 7)
+
+iSCMEBObj <- SelectModel(iSCMEBObj)
+```
+
+```{r}
+LabelList <- lapply(iSCMEBObj@seulist, function(seu) seu@meta.data$layer_guess_reordered)
+ARI <- function(x, y) mclust::adjustedRandIndex(x, y)
+ari_sections <- sapply(1:2, function(i) ARI(idents(iSCMEBObj)[[i]], LabelList[[i]]))
+ari_all <- ARI(unlist(idents(iSCMEBObj)), unlist(LabelList))
+print(ari_sections)
+print(ari_all)
+```
+```{r}
+cols = c("#fb8072", "#bebada", "#80b1d3", "#ffffb3", "#8dd3c7", "#b3de69", "#fdb462")
+p1 <- SpaHeatMap(iSCMEBObj, item = "cluster", plot_type = "Scatter", nrow.legend = 1, layout.dim = c(1,
+    2), no_axis = TRUE, cols = cols)
+p1
+```
+```{r}
+iSCMEBObj <- CalculateTSNE(iSCMEBObj, reduction = "iSCMEB", n_comp = 2)
+library(patchwork)
+
+p2 <- LowEmbedPlot(iSCMEBObj, item = "cluster", reduction = "TSNE2", point_size = 0.3)
+p3 <- LowEmbedPlot(iSCMEBObj, item = "batch", reduction = "TSNE2", point_size = 0.3)
+p2 + p3
+```
+```{r}
+sessionInfo()
+```
+
+
+# The dataset TNBC
+
+## Dataset
+Load the SPE object.
+```{r}
+load(file = here::here("Output","RData","02_TNBC_spe_LC.rds"))
+spe
+spe_4 <- spe[, spe$sample_id == "Sample_04"]
+spe_12 <- spe[, spe$sample_id == "Sample_12"]
+spe_12
+
+assayNames(spe_4)
+
+# colnames(spatialCoords(spe_4))[1] = "row"
+# colnames(spatialCoords(spe_4))[2] = "col"
+# 
+# colnames(spatialCoords(spe_12))[1] = "row"
+# colnames(spatialCoords(spe_12))[2] = "col"
+```
+
+```{r,TNBC}
+TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
+TNBC$sample_id <- as.factor(TNBC$sample_id )
+TNBC$STAGE <- as.factor(TNBC$STAGE)
+TNBC$mm <- as.factor(TNBC$mm)
+```
+
+
+## Seurat object list include(patient patient 4 and patient 12)
+```{r}
+library(Seurat)
+#??CreateSeuratObject
+
+# Seurat object for patient 4
+assayNames(spe_4)
+count_4 <- assay(spe_4, "exprs")
+
+if (!inherits(count_4, "dgCMatrix")) {
+  count_4 <- Matrix::Matrix(count_4, sparse = TRUE)
+}
+# create a Seurat object with the counts matrix for paatient 4
+seurat_object_4 <- Seurat::CreateSeuratObject(counts = count_4,assay = "Protein", project = "SpatialExperiment")
+seurat_object_4 <- FindVariableFeatures(seurat_object_4, selection.method = "vst", nfeatures = 36)
+
+# Seurat object for patient 12
+count_12 <- assay(spe_12, "exprs")
+
+if (!inherits(count_12, "dgCMatrix")) {
+  count_12<- Matrix::Matrix(count_12, sparse = TRUE)
+}
+
+seurat_object_12 <- Seurat::CreateSeuratObject(counts = count_12,assay = "Protein", project = "SpatialExperiment")
+seurat_object_12 <- FindVariableFeatures(seurat_object_12, selection.method = "vst", nfeatures = 36)
+seurat_list <- list(seurat_object_4, seurat_object_12)
+
+```
+
+
+```{r}
+library(SingleCellExperiment)
+library(Seurat)
+
+# Extract spatial coordinates for patient 4
+spatialCoords_4 <- as.data.frame(spatialCoords(spe_4))
+
+# Add spatial coordinates to the Seurat object's metadata and change the name to row and col
+seurat_object_4@meta.data$row <- spatialCoords_4$centroidX
+seurat_object_4@meta.data$col <- spatialCoords_4$centroidY
+
+# Repeat for patient 12
+spatialCoords_12 <- as.data.frame(spatialCoords(spe_12))
+
+seurat_object_12@meta.data$row <- spatialCoords_12$centroidX
+seurat_object_12@meta.data$col <- spatialCoords_12$centroidY
+
+```
+
+```{r}
+library(Seurat)
+
+seurat_object_4 <- SetAssayData(seurat_object_4, slot = "data", new.data = count_4)
+# Change the class of Protein as Assay
+# class(seurat_object_4 @assays[["Protein"]])<- "Assay"
+# View(seurat_object_4)
+
+seurat_object_12 <- SetAssayData(seurat_object_12, slot = "data", new.data = count_12)
+# Change the class of Protein as Assay
+# class(seurat_object_12 @assays[["Protein"]])<- "Assay"
+
+# Create the list of Seurat objects
+seurat_list <- list(seurat_object_4, seurat_object_12)
+
+```
+
+```{r}
+counts <- GetAssayData(seurat_object_4, assay = "Protein", slot = "counts")
+data <- GetAssayData(seurat_object_4, assay = "Protein", slot = "data")
+seurat_object_4[["Protein"]]$data <- NormalizeData(seurat_object_4[["Protein"]]$counts)
+seurat_object_4[["Protein"]]$counts <- NormalizeData(seurat_object_4[["Protein"]]$counts)
+
+counts <- GetAssayData(seurat_object_12, assay = "Protein", slot = "counts")
+data <- GetAssayData(seurat_object_12, assay = "Protein", slot = "data")
+seurat_object_12[["Protein"]]$counts
+seurat_object_12[["Protein"]]$data <- NormalizeData(seurat_object_12[["Protein"]]$counts)
+seurat_object_12[["Protein"]]$counts <- NormalizeData(seurat_object_12[["Protein"]]$counts)
+# convert a v5 assay to a assay
+seurat_object_4[["Protein"]] <- as(object = seurat_object_4[["Protein"]], Class = "Assay")
+seurat_object_12[["Protein"]] <- as(object = seurat_object_12[["Protein"]], Class = "Assay")
+
+seurat_list <- list(seurat_object_4, seurat_object_12)
+View(seurat_list)
+```
+
+
+```{r}
+seurat_object_12[["Protein"]]$counts
+seurat_object_12[["Protein"]]$data <- NormalizeData(seurat_object_12[["Protein"]]$counts)
+View(seurat_object_12)
+# Extract counts and data from layers
+counts <- GetAssayData(seurat_object_12, assay = "Protein", slot = "counts")
+data <- GetAssayData(seurat_object_12, assay = "Protein", slot = "data")
+
+# Set counts and data to their respective slots
+seurat_object_12 <- SetAssayData(object = seurat_object_4, assay = "Protein", slot = "counts", new.data = counts)
+seurat_object_12 <- SetAssayData(object = seurat_object_4, assay = "Protein", slot = "data", new.data = data)
+
+# Check the structure now
+seurat_object_4@assays$Protein
+View(seurat_object)
+
+# Assuming 'seurat_object' is your Seurat object
+# First, retrieve the counts and data from the layers
+counts <- seurat_object_4@assays$Protein@layers$counts
+data <- seurat_object_4@assays$Protein@layers$data
+
+# Next, assign them to the main slots of the Protein assay
+seurat_object_4@assays$Protein@counts <- counts
+seurat_object_4@assays$Protein@data <- data
+
+# Finally, remove the counts and data from the layers
+seurat_object@assays$Protein@layers$counts <- NULL
+seurat_object@assays$Protein@layers$data <- NULL
+
+
+```
+
+```{r}
+library(Seurat)
+install.packages(SeuratData)
+library(SeuratData)
+library(BPCells)
+library(dplyr)
+options(Seurat.object.assay.version = "v1")
+pbmc3k <- LoadData("pbmc3k")
+mousebrain1m <- readRDS("/brahms/hartmana/vignette_data/1p3_million_mouse_brain.rds")
+
+#  Protein assay is of the Assay5 class
+class(pbmc3k[["Protein"]])
+class(mousebrain1m[["Protein"]])
+```
+
+```{r}
+count_matrix4
+seurat_object_4 <- Seurat::CreateSeuratObject(counts = count_matrix4, project = "SpatialExperiment")
+seurat_object_4 <- FindVariableFeatures(seurat_object_4, nfeatures = 36)
+
+count_matrix12
+seurat_object_12 <- Seurat::CreateSeuratObject(counts = count_matrix12, project = "SpatialExperiment")
+seurat_object_12 <- FindVariableFeatures(seurat_object_12, nfeatures = 36)
+
+seurat_list_2 <- list(seurat_object_4, seurat_object_12)
+
+class(seurat_list_2[[1]]@assays[["Protein"]]) <- "Assay"
+class(seurat_list_2[[2]]@assays[["Protein"]]) <- "Assay"
+```
+
+```{r}
+for (i in seq_along(seurat_list)) {
+  print(dim(seurat_list[[i]]))
+}
+# Assuming that 'seurat_object' is one of the Seurat objects in your list
+# And that 'is.SVGs' is the vector that is causing the problem
+print(length(seurat_object_4@meta.data$is.SVGs))
+print(nrow(seurat_object_4@meta.data))
+
+# Check if they match, if they don't, you've likely found the problem source
+
+for (seurat_obj in seurat_list) {
+  print(nrow(seurat_obj@meta.data))
+  # Check for specific metadata columns you expect to use
+  if ("is.SVGs" %in% names(seurat_obj@meta.data)) {
+    print(length(seurat_obj@meta.data$is.SVGs))
+  }
+}
+
+for (seurat_obj in seurat_list) {
+  print(nrow(seurat_obj@meta.data))
+  # Check for specific metadata columns you expect to use
+  if ("is.SVGs" %in% names(seurat_obj@meta.data)) {
+    print(length(seurat_obj@meta.data$is.SVGs))
+  }
+}
+
+```
+
+##iSCMEB_Obj
+```{r}
+Genelist <- row.names(seurat_list[[1]])
+iSCMEB_Object <- CreateiSCMEBObject(
+  seuList = seurat_list,
+  project = "iSC.MEB",
+  gene.number = 36,
+  selectGenesMethod = c("SPARK-X", "HVGs"),
+  numCores_sparkx = 1,
+  customGenelist = Genelist,
+  premin.spots = 0,
+  premin.features =0,
+  postmin.spots = 0,
+  postmin.features = 0,
+  rawData.preserve = FALSE,
+  verbose = TRUE
+)
+View(iSCMEB_Object)
+iSCMEB_Object@seulist
+
+# iSCMEB_Object <- CreateNeighbors(iSCMEB_Object, platform = "Visium")
+iSCMEB_Object<- CreateNeighbors(iSCMEB_Object, radius.upper = 400)
+## run PCA to get low dimensional embeddings
+iSCMEB_Object <- runPCA(iSCMEB_Object,npcs = 15)
+iSCMEB_Object <-runPCA(
+  iSCMEB_Object,
+  npcs = 15,
+  pca.method ="APCA",
+  reduction.name = "pca",
+  seed = 1
+)
+# iSCMEB_Object <-  runPCA(iSCMEB_Object, npcs = 5, pca.method = "APCA")
+## Add a model setting in advance for an iSCMEB_Object object. verbose = TRUE helps outputing the information in the algorithm.
+iSCMEB_Object <- SetModelParameters(iSCMEB_Object, verbose = TRUE)
+```
+```{r}
+a<- ScaleData(iSCMEB_Object@seulist[[1]],verbose = FALSE)
+iSCMEB_Object@seulist[[1]]<- RunPCA(a,verbose = FALSE, npcs = 5)
+b<- ScaleData(iSCMEB_Object@seulist[[2]],verbose = FALSE)
+iSCMEB_Object@seulist[[2]]<- RunPCA(b,verbose = FALSE, npcs = 5)
+```
+
+```{r}
+# Add 'reduction.name',"pca.method" and  "npcs" to the parameterList slot
+parameterList <- slot(iSCMEB_Object, "parameterList") # current parameterList
+parameterList[["reduction.name"]] <- "pca"
+parameterList[["pca.method"]] <- "APCA"
+parameterList[["npcs"]] <- 5
+slot(iSCMEB_Object, "parameterList") <- parameterList
+
+
+iSCMEB_Object <- iSCMEB(iSCMEB_Object, K = 5)
+```
+
+
+```{r}
+iSCMEB_Object <- SelectModel(iSCMEB_Object)
+
+LabelList <- lapply(iSCMEB_Object@seulist, function(seu) seu@meta.data$layer_guess_reordered)
+ARI <- function(x, y) mclust::adjustedRandIndex(x, y)
+ari_sections <- sapply(1:2, function(i) ARI(idents(iSCMEB_Object)[[i]], LabelList[[i]]))
+ari_all <- ARI(unlist(idents(iSCMEB_Object)), unlist(LabelList))
+print(ari_sections)
+print(ari_all)
+
+ari_sections <- sapply(1:2, function(i) {
+  # Print lengths to check
+  print(length(idents(iSCMEB_Object)[[i]]))
+  print(length(LabelList[[i]]))
+  
+  # Only calculate ARI if lengths are the same
+  if(length(idents(iSCMEB_Object)[[i]]) == length(LabelList[[i]])) {
+    return(ARI(idents(iSCMEB_Object)[[i]], LabelList[[i]]))
+  } else {
+    warning("Lengths are not equal for i =", i)
+    return(NA)
+  }
+})
+
+```
+
+```{r}
+p2 <- SpaHeatMap(iSCMEB_Object, item = "cluster", plot_type = "Scatter", layout.dim = c(1, 3), nrow.legend = 2,
+    no_axis = TRUE, point_size = 1.5)
+p2
+
+
+cols = c("#fb8072", "#bebada", "#ffffb3", "#b3de69", "#fdb462")
+p1 <- SpaHeatMap(iSCMEB_Object, item = "cluster", plot_type = "Scatter", nrow.legend = 1, layout.dim = c(1,
+    2), no_axis = TRUE, cols = cols)
+p1
+```
+```{r}
+iSCMEB_Object <- CalculateTSNE(iSCMEB_Object, reduction = "iSCMEB", n_comp = 2)
+library(patchwork)
+
+p2 <- LowEmbedPlot(iSCMEB_Object, item = "cluster", reduction = "TSNE2", point_size = 0.3)
+p3 <- LowEmbedPlot(iSCMEB_Object, item = "batch", reduction = "TSNE2", point_size = 0.3)
+p2 + p3
+```
+

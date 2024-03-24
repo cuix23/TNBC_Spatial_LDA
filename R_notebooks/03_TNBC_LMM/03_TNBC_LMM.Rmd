@@ -1,0 +1,166 @@
+---
+title: "MB_Xeno Linear Mixed Model"
+author: "Xinyue_Cui"
+date: "2023-10-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# packages
+```{r}
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(cytomapper)
+library(ggplot2)
+library(formattable)
+library(magrittr)
+library(lme4)
+library(car)
+```
+
+# The dataset TNBC
+```{r}
+TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
+TNBC$sample_id <- as.factor(TNBC$sample_id )
+TNBC$mm <- as.factor(TNBC$mm )
+TNBC$cell_id<- paste(TNBC$ImageNb, TNBC$cellLabelInImage, sep="_")
+colnames(TNBC)
+```
+
+```{r}
+table(TNBC$sample_id,TNBC$LATERAL)
+table(TNBC$sample_id,TNBC$RECURRENCE_LABEL)
+table(TNBC$sample_id,TNBC$STAGE)
+# TNBC$CD45
+```
+
+```{r}
+# get a distribution plot of dsDNA_asinh_znorm
+summary(TNBC$CD45RO)
+ggplot(TNBC, aes(x = CD45)) +
+  geom_density(fill = "blue", alpha = 0.5) +
+  # xlim(0, 1) +
+  labs(title = "Density Plot of CD45",
+       x = "Variable Value",
+       y = "Density")
+```
+
+```{r}
+
+sum(is.na(TNBC$CD45))
+sum(is.infinite(TNBC$CD45))
+
+
+```
+
+
+```{r}
+class(TNBC$LATERAL)
+class(TNBC$STAGE)
+class(TNBC$sample_id)
+
+TNBC$STAGE <- as.factor(TNBC$STAGE)
+```
+
+```{r}
+TNBC.lme1 <- lmer(CD45 ~ STAGE + ( STAGE| sample_id ), data= TNBC )
+ranef(TNBC.lme1)
+fixef(TNBC.lme1)
+summary(TNBC.lme1)
+#check linearity
+plot(TNBC.lme1, type="p") 
+#check independence of observations
+residuals_list <- residuals(TNBC.lme1, type="deviance")
+plot(residuals_list ~ sample_id, data= TNBC, ylab="Residuals", xlab="Time or Sequence")
+# Homoscedasticity: Residuals should have constant variance across fitted values.
+plot(TNBC.lme1, type="p")
+# Normally Distributed Residuals: The histogram should look roughly bell-shaped, and points in the Q-Q plot should fall roughly along the straight line.
+hist(residuals(TNBC.lme1))
+qqnorm(residuals(TNBC.lme1))
+qqline(residuals(TNBC.lme1))
+
+# Appropriate Model Specification:the smaller the AIC,BIC,likelihood ratio test, the better the model
+AIC(TNBC.lme1)
+BIC(TNBC.lme1)
+```
+
+```{r}
+pred_val <- predict(TNBC.lme1, newdata=TNBC)
+TNBC$pred <- pred_val
+head(TNBC) 
+# Mean of hat(y)
+mean(pred_val)
+# Mean of y
+mean(TNBC$CD45)
+
+```
+
+```{r}
+# Get average logit.dsDNA_asinh_znorm for each tissue
+Avg_y_sample <- TNBC %>%
+  group_by(STAGE, sample_id) %>%
+  summarise(average_sample = mean(CD45, na.rm = TRUE))
+# Get average  logit.dsDNA_asinh_znorm for each sample
+Avg_y_stage <- TNBC %>%
+  group_by(sample_id,STAGE) %>%
+  summarise(average = mean(CD45, na.rm = TRUE))
+```
+```{r}
+MB_Xeno_logit$pred <- pred_val
+# Get average predict logit.dsDNA_asinh_znorm within samples for each unique tissue_id
+pred_Avg <- MB_Xeno_logit %>%
+  group_by(treatment_id, tissue_id) %>%
+  summarise(average_pred_tissue = mean(pred, na.rm = TRUE))
+# Get average predict logit.dsDNA_asinh_znorm within samples for each unique sample_id
+pred_Avg_sample <- MB_Xeno_logit %>%
+  group_by(sample_id,treatment_id, tissue_id) %>%
+  summarise(average_pred_sample = mean(pred, na.rm = TRUE))
+```
+```{r}
+Avg_tissue <- Avg_y_tissue
+Avg_tissue$average_pred_tissue <-pred_Avg $average_pred_tissue
+Avg_tissue
+```
+
+# Function to fit and visualize LMM
+```{r}
+fit_lmm <- function(marker, data) {
+
+  # Convert factor or character column to numeric
+  TNBC$marker <- as.numeric(as.character(TNBC$marker))
+  # Check for NAs or infinite values
+  sum(is.na(TNBC$marker))
+  sum(is.infinite(TNBC$marker))
+  min(TNBC$marker)
+  max(TNBC$marker)
+  # Remove rows with infinite values in the marker column
+  TNBC<- TNBC[!is.infinite(TNBC$marker), ]
+  # Formula
+  formula = marker ~ STAGE+ ( 1| sample_id )
+  # Fit LMM
+  model <- lmer(formula, data = TNBC, REML = TRUE)
+  # Print summary
+  model_summary <- summary(model)
+  print(model_summary)
+  # fixef(model) %>% lapply()
+  # ranef(model) %>% lapply()
+  
+  # Plot random effects
+  plot(model, type="p")
+  hist(residuals(model))
+qqnorm(residuals(model))
+qqline(residuals(model))
+
+   return(model_summary) 
+}
+
+# fit_lmm(MB_Xeno$dsDNA_asinh_znorm)
+
+```
+
+
+

@@ -1,0 +1,169 @@
+---
+title: "Untitled"
+author: "Xinyue_Cui"
+date: "2023-08-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_knit$set(root.dir = "../")
+#knitr::opts_knit$set(output.dir = "../Output_Documents/")
+options(dplyr.summarise.inform = FALSE)
+```
+
+## Libaries
+```{r warning=FALSE, message=FALSE}
+# BiocManager::install("SPIAT")
+library(SPIAT)
+library(dplyr)
+#library(ggspavis)
+library(ggplot2)
+library(SpatialExperiment)
+```
+# load data
+```{r}
+TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
+TNBC$sample_id <- as.factor(TNBC$sample_id )
+TNBC$mm <- as.factor(TNBC$mm )
+TNBC$cell_id<- paste(TNBC$ImageNb, TNBC$cellLabelInImage, sep="_")
+
+head(TNBC)
+unique(TNBC$mm)
+```
+# Identifying cluster_id  compartment
+```{r}
+immune_names <- c("B", "CD3 T", "CD4 T", "CD8 T", "DC", "DC/Mono", 
+                  "T reg", "NK", "Mono/Neu", "Neu", "Mac", "Other immune")
+nonimmune_names <- c("Endothelial", "Epithelial", "Mesenchymal")
+tumor_names <- c("Other")
+```
+
+
+## Load RDS file of SPE
+
+Load the spatial experiment object created earlier.
+```{r}
+load(file = here::here("Output","RData","02_TNBC_spe_LC.rds"))
+spe
+```
+
+```{r}
+colnames(spe) <- paste0("Cell_", 1:dim(assay(spe))[[2]])
+spe
+```
+
+```{r}
+color_vectors <- list()
+
+phenotype_col <- setNames(object = c(
+  "#6600CC",
+  "#CC0066",
+  "#66FFFF",
+  "#FF0000",
+  "#FFFF00",
+  "#C65911",
+  "orange",
+  "#66FF99",
+  "#0070C0",
+  "#92D050",
+  "#007009",
+  "#660010",
+  "#DA9EA9",
+  "#C1B6D3",
+  "green",
+  "#EAF7B6"), unique(spe$mm))
+phenotype_col
+```
+
+
+for patient 4
+```{r}
+spe_4 <- spe[, spe$sample_id == "Sample_04"]
+#celltype <- tibble(spe_1$mm)
+#coordX <- tibble(spatialCoords(spe_1)[, "centroidX"])
+#coordY <- tibble(spatialCoords(spe_1)[, "centroidY"])
+celltype <- spe_4$mm
+coordX <- spatialCoords(spe_4)[, "centroidX"]
+coordY <- spatialCoords(spe_4)[, "centroidY"]
+```
+#Transform spe into SPIAT format
+```{r}
+spiat_sample_4 <- SPIAT::format_image_to_spe(format = "general",
+                                    intensity_matrix = assay(spe_4),
+                                    phenotypes = celltype,
+                                    coord_x = coordX,
+                                    coord_y = coordY)
+spiat_sample_4
+```
+# Cluster compartment in the tissue
+```{r}
+unique_cells <- unique(spiat_sample_4$Phenotype)
+immune_cells <- base::subset(unique_cells, unique_cells %in% immune_names)
+nonimmune_cells <- base::subset(unique_cells, unique_cells %in% nonimmune_names)
+tumor_cells <- base:: subset(unique_cells, unique_cells %in% tumor_names)
+
+```
+
+```{r}
+colour_pal <- phenotype_col[unique_cells]
+colour_pal
+```
+
+#Visulazing tissues
+```{r}
+p1 <- plot_cell_categories(spe_object = spiat_sample_4,
+                     categories_of_interest = unique(spiat_sample_4$Phenotype),
+                      colour_vector = colour_pal,
+                      # colour_vector = as.factor(Phenotypes),
+                     feature_colname = "Phenotype") +
+  #scale_color_manual(values = metadata(spiat_sample1)$color_vectors$phenotype) +
+  ggtitle("")
+p1
+```
+
+for patient 12
+```{r}
+spe_12 <- spe[, spe$sample_id == "Sample_12"]
+#celltype <- tibble(spe_1$mm)
+#coordX <- tibble(spatialCoords(spe_1)[, "centroidX"])
+#coordY <- tibble(spatialCoords(spe_1)[, "centroidY"])
+celltype <- spe_12$mm
+coordX <- spatialCoords(spe_12)[, "centroidX"]
+coordY <- spatialCoords(spe_12)[, "centroidY"]
+```
+#Transform spe into SPIAT format
+```{r}
+spiat_sample_12 <- SPIAT::format_image_to_spe(format = "general",
+                                    intensity_matrix = assay(spe_12),
+                                    phenotypes = celltype,
+                                    coord_x = coordX,
+                                    coord_y = coordY)
+spiat_sample_12
+```
+```{r}
+unique_cells <- unique(spiat_sample_12$Phenotype)
+immune_cells <- base::subset(unique_cells, unique_cells %in% immune_names)
+nonimmune_cells <- base::subset(unique_cells, unique_cells %in% nonimmune_names)
+tumor_cells <- base:: subset(unique_cells, unique_cells %in% tumor_names)
+
+```
+
+```{r}
+colour_pal <- phenotype_col[unique_cells]
+colour_pal
+```
+#Visulazing tissues
+```{r}
+p1 <- plot_cell_categories(spe_object = spiat_sample_12,
+                     categories_of_interest = unique(spiat_sample_12$Phenotype),
+                      colour_vector = colour_pal,
+                      # colour_vector = as.factor(Phenotypes),
+                     feature_colname = "Phenotype") +
+  #scale_color_manual(values = metadata(spiat_sample1)$color_vectors$phenotype) +
+  ggtitle("")
+p1
+```
+
+
+

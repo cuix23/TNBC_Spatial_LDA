@@ -1,0 +1,215 @@
+---
+title: "TNBC_topic_LMM"
+author: "Xinyue_Cui"
+date: "2024-03-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# packages
+```{r}
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(cytomapper)
+library(ggplot2)
+library(formattable)
+library(magrittr)
+library(lme4)
+library(car)
+```
+```{r}
+# load(file = here::here("R_notebooks", "TNBC_topic_proportion.Rmd"))
+```
+
+# The dataset TNBC
+
+```{r}
+TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
+TNBC$sample_id <- as.factor(TNBC$sample_id )
+TNBC$STAGE <- as.factor(TNBC$STAGE)
+TNBC$mm <- as.factor(TNBC$mm)
+```
+
+```{r}
+table(TNBC$sample_id)
+dim(TNBC)
+table(TNBC$STAGE)
+str(TNBC)
+```
+
+# Analysis on spa_list[[1]]( first iteration)
+```{r}
+# Access the data frame within the list and convert the columns
+spa_list[[1]]$sample_id <- as.factor(spa_list[[1]]$sample_id)
+spa_list[[1]]$cell_id <- as.factor(spa_list[[1]]$cell_id)
+spa_list[[1]]$cell_type <- as.factor(spa_list[[1]]$cell_type)  # If you want to convert cell_type as well
+
+# If you want to convert all character columns to factors
+spa_list[[1]][] <- lapply(spa_list[[1]], function(x) if(is.character(x)) factor(x) else x)
+
+# To check if the conversion has been successful
+str(spa_list[[1]])
+```
+# analysis of mean_result
+```{r}
+mean_result <-  cbind(TNBC, cell_id = dimnames(assay(spe))[[2]] ) %>%left_join(mean_cluster_prop, by = c("mm" = "cell_type"))
+head(mean_result)
+```
+# Linear mixed model on proportion of topic 1 of mean result
+```{r}
+predictor <- scale(mean_result[, c("Survival_days_capped", "cellSize")])
+
+formula <- Topic_1 ~ predictor + STAGE+ (1| sample_id)
+TNBC_t1_lmm_mean <- lmer(formula , data= mean_result)
+summary(TNBC_t1_lmm_mean)
+ranef(TNBC_t1_lmm_mean)
+fixef(TNBC_t1_lmm_mean)
+
+mean_result$topic1_pred <- predict(TNBC_t1_lmm_mean)
+sqrt(sum(mean_result$Topic_1-mean_result$topic1_pred))
+
+mean_result_4 <- mean_result[mean_result$sample_id == '4', ]
+
+library(ggplot2)
+
+ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color = topic1_pred)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "black") +  # Adjust the color gradient if needed
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+mean_result_12 <- mean_result[mean_result$sample_id == '12', ]
+
+ggplot(mean_result_12, aes(x = centroidX, y = centroidY, color = topic1_pred)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "black") +  # Adjust the color gradient if needed
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+```
+```{r}
+topic_number = 4
+topic_name <- paste0("Topic_", topic_number)
+topic_name
+```
+
+# function for Linear mixed model on proportion of topics of mean result, output the plot
+```{r}
+predictor <- scale(mean_result[, c("Survival_days_capped", "cellSize")])
+formula <- Topic_2 ~ predictor + STAGE+ (1| sample_id)
+library(lme4)
+library(ggplot2)
+
+topic_LMM_pred <- function(mean_result, topic_number, sample_number){
+  predictor <- scale(mean_result[, c("Survival_days_capped", "cellSize")])
+  topic_name <- paste0("Topic_", topic_number)
+  formula <- topic_name ~ predictor + STAGE+ (1| sample_id)
+  
+  # Fit the linear mixed model
+  TNBC_lmm_mean <- lmer(formula, data = mean_result)
+  
+  # Predict values and calculate error
+  topic_pred_col_name <- paste0("Topic_", topic_number, "_pred")
+  mean_result[[topic_pred_col_name]] <- predict(TNBC_lmm_mean)
+  
+  topic_col_name <- paste0("Topic_", topic_number)
+  error <- sqrt(sum((mean_result[[topic_col_name]] - mean_result[[topic_pred_col_name]])^2, na.rm = TRUE))
+  
+  mean_result_sample <- mean_result[mean_result$sample_id == sample_number, ]
+  
+  # Generate the plot
+  result_plot <- ggplot(mean_result_sample, aes(x = centroidX, y = centroidY, color = get(topic_pred_col_name))) +
+    geom_point(size = 1, alpha = 1) +
+    scale_color_gradient(low = "white", high = "black") +
+    theme_minimal() +
+    labs(title = paste('Spatial Plot of Cells - Sample', sample_number), x = 'Centroid X', y = 'Centroid Y') +
+    theme(legend.position = "right")
+  
+  # Return a list with model summary, plot, and RMSE
+  return(list(model_summary = summary(TNBC_lmm_mean), error = error, plots = result_plot))
+}
+
+# Example of using the function
+# result <- topic_LMM_pred(mean_result, "1", "4") # Replace "1" with the actual topic number and "4" with the actual sample ID
+
+```
+
+```{r}
+topic_LMM_pred(mean_result, 1,4)
+
+topic_number=1
+sample_number=4
+
+
+
+topic_LMM_pred(mean_result, 2,4)$plot
+topic_LMM_pred(mean_result, 3,4)$plot
+topic_LMM_pred(mean_result, 4,4)$plot
+topic_LMM_pred(mean_result, 5,4)$plot
+```
+```{r}
+topic_LMM_pred(mean_result, 1,12)$plot
+topic_LMM_pred(mean_result, 2,12)$plot
+topic_LMM_pred(mean_result, 3,12)$plot
+topic_LMM_pred(mean_result, 4,12)$plot
+topic_LMM_pred(mean_result, 5,12)$plot
+```
+
+
+```{r}
+library(lme4)
+library(ggplot2)
+
+topic_LMM_pred <- function(mean_result, topic_number, sample_number){
+  # Scale the predictors
+  mean_result[["Survival_days_capped_scaled"]] <- scale(mean_result[["Survival_days_capped"]])
+  mean_result[["cellSize_scaled"]] <- scale(mean_result[["cellSize"]])
+
+  # Build the formula with the actual column names for the predictors
+  topic_name <- paste0("Topic_", topic_number)
+  formula <- as.formula(paste(topic_name, "~ Survival_days_capped_scaled + cellSize_scaled + STAGE + (1|sample_id)"))
+
+  # Fit the linear mixed model
+  TNBC_lmm_mean <- lmer(formula, data = mean_result)
+
+  # Predict values and calculate error
+  topic_pred_col_name <- paste0(topic_name, "_pred")
+  mean_result[[topic_pred_col_name]] <- predict(TNBC_lmm_mean, re.form = NA)  # re.form = NA to predict only fixed effects
+
+  error <- sqrt(mean((mean_result[[topic_name]] - mean_result[[topic_pred_col_name]])^2, na.rm = TRUE))
+
+  # Subset data for a specific sample_number
+  mean_result_sample <- mean_result[mean_result$sample_id == sample_number, ]
+
+  result_plot <- ggplot(mean_result_sample, aes(x = centroidX, y = centroidY, color = get(topic_pred_col_name))) +
+    geom_point(size = 1, alpha = 1) +
+    scale_color_gradient(low = "white", high = "black", limits = c(0, 1)) + # Ensuring the gradient covers 0-1 range
+    theme_minimal() +
+    labs(title = paste('Spatial Plot of Cells - Sample', sample_number), x = 'Centroid X', y = 'Centroid Y') +
+    theme(legend.position = "right")
+  
+
+  # Return a list with model summary, plot, and RMSE
+  return(list(model_summary = summary(TNBC_lmm_mean), error = error, plots = result_plot))
+}
+
+# Example of using the function
+# result <- topic_LMM_pred(mean_result, 1, 4)
+# print(result$plots)  # To print the plot
+# print(result$error)  # To print the error
+# print(result$model_summary)  # To print the model summary
+
+```
+
+
+
+
+
+
+

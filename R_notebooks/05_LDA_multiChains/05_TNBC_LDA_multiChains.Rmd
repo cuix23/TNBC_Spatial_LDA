@@ -1,0 +1,461 @@
+---
+title: "05_MB_Xeno_LDA_multiChains"
+knit: (function(input, encoding) {
+  rmarkdown::render(input = input,
+                    output_dir = here::here("Output", "HTML"),
+                     knit_root_dir = rprojroot::find_rstudio_root_file())})
+output:
+  html_document: 
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+  pdf_document: 
+    toc: yes
+date: "2023-11-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_knit$set(root.dir = "../")
+#knitr::opts_knit$set(output.dir = "../Output_Documents/")
+options(dplyr.summarise.inform = FALSE)
+set_here("/Users/cuixinyue/Desktop/TNBC_analysis")
+```
+
+
+## Library
+```{r library, warning=FALSE, message=FALSE}
+library(rstan)
+library(dplyr)
+library(ggplot2)
+library(randomcoloR)
+library(SpatialExperiment)
+library(here)
+```
+
+
+```{r plot theme}
+theme_set(theme_minimal())
+theme_update(
+  text = element_text(size = 10),
+  legend.text = element_text(size = 10)
+)
+
+# plot theme
+remove_x <- theme(
+  axis.text.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.title.x = element_blank()
+)
+
+remove_y <- theme(
+  axis.text.y = element_blank(),
+  axis.ticks.y = element_blank(),
+  axis.title.y = element_blank()
+)
+
+# force not to use scientific notation
+options(scipen=999)
+```
+
+## Dataset
+
+Load the MB_Xeno SPE object.
+```{r dataset, warning=FALSE, message=FALSE}
+load(file = here("Output","RData","02_TNBC_spe_LC.rds"))
+spe
+```
+
+## Pre-process
+### Document-Term Matrix
+
+We want to create the Document-Term matrix of the data set where the rows are the sample identity and columns are the cell types fill with counts. The expected dimension of the DTM is 39 rows by 16 columns.
+
+```{r dtm}
+dtm <- as.data.frame.matrix(table(spe$sample_id, spe$mm)) %>% as.matrix()
+dtm <- as.matrix(table(spe$sample_id, spe$mm))
+dim(dtm)
+dim_names <- dimnames(dtm)
+col_names <- colnames(dtm)
+```
+```{r}
+K <- 5
+alpha <- 0.8
+gamma <- 0.8
+x <- dtm
+chains = 2
+```
+### Posterior Sampling
+
+We want to estimate the parameters $\theta$ and $B = \left[\beta_{1}, \cdots, \beta_{K} \right]^{T}$, and we estimate using Hamiltonian Monte Carlo(HMC) No-U-Turn-Sampler(NUTS) with one chain and 500, 1000, and 2000 iterations. Out of these iterations, half of the iteration were used as warm-up samples.
+
+We will apply `get_lda_result()` to perform LDA and save results.
+
+```{r lda result, eval=FALSE}
+source(here::here("R_notebooks","06_LDA_scripts", "06_get_lda_result.R"))
+
+patients <- get_lda_result(K = 5, alpha = 0.8, gamma = 0.8,
+                          dtm = dtm, iter = 500, chains = 2,
+                          file_fold = "05_LDA_multiChains", save_file = TRUE)
+```
+
+Load the existing LDA estimations.
+```{r}
+# source(here::here("R_notebooks", "06_LDA_scripts", "06_load_lda_result.R"))
+load_lda_result <- function(file) {
+  load(file)
+  res <- rstan::extract(
+    stan.fit,
+    permuted = TRUE,
+    inc_warmup = FALSE,
+    include = TRUE
+  )
+  return(list(stan.fit,
+              res))
+}
+
+file_fold = "05_LDA_multiChains"
+lda_file = "JABES_Endo_all_K_5_ite_500.RData"
+file = here::here("Output", "RData", file_fold, lda_file)
+
+load(file)
+stan.fit
+res <- rstan::extract(
+    stan.fit,
+    permuted = TRUE,
+    inc_warmup = FALSE,
+    include = TRUE
+  )
+samples <-res
+dim(stan.fit)
+```
+
+## Topics Analysis
+### Theta
+We want to extract estimation of parameters $\theta$ and $B = \left[\beta_{1}, \cdots, \beta_{K} \right]^{T}$. 
+
+The dimension of $\theta$ is N x D x K, where k is the number of iterations with 9 tissues and 3 topics. Each value is the probability of each patient in each topic in each iteration. Each value is the probability in each iteration of each topic of each tissue sample.
+
+We are also interested in what cell types are in each topic, which is the $\beta$ estimation. The expected dimension is N x K x T, where $k$ is the number of iterations for 3 topics and 33 cell types. Each value is the probability in each iteration of each cell type in each topic.
+
+Each value is the $k$ topic proportion in $d$ sample in $n$ iteration.
+Each value is the $t$ term proportion in $k$ topic in $n$ iteration.
+
+```{r}
+# theta estimation
+theta <- samples$theta
+dim(theta)
+
+# beta estimation
+beta <- samples$beta
+dim(beta)
+```
+
+### Alignment matrix
+```{r}
+library(abind)
+source(here::here("R_notebooks", "06_LDA_scripts", "06_alignmentMatrix.R"))
+
+aligned_matrix <- alignmentMatrix(
+  theta = theta,
+  spe = spe,
+  K = K,
+  iter = iter,
+  chain = chain,
+  #cor_method = "cosine",
+  SampleID_name = "sample_id"
+)
+```
+
+### Align topic proportion
+
+We align the topic proportion in each specimen across four chains.
+```{r align-theta}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_thetaAligned.R"))
+
+theta_aligned <- thetaAligned(
+  theta = theta, 
+  K = K, 
+  aligned = aligned_matrix, 
+  iter = iter,
+  chain = chain,
+  )
+theta_aligned 
+dim(theta_aligned)
+```
+
+### Align ASV proportion
+
+We align the ASVs proportion in each topic across four chains.
+```{r align-beta}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_betaAligned.R"))
+
+beta_aligned <- betaAligned(
+  beta = beta, 
+  K = K, 
+  aligned = aligned_matrix, 
+  iter = iter,
+  chain = chain,
+  ) 
+beta_aligned 
+```
+## Diagnostic after aligned
+
+
+## Visualization
+
+### Plot topic proportion
+
+Plot the topic proportion in specimens and we can save it for publication purposes. We can draw an informative summary of bacterial communities in each phenotype.
+```{r plot-topic-prop, fig.width=20, fig.height=8}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_plotTopicProportion.R"))
+
+p_topicProp <- plotTopicProportion(
+  spe = spe,
+  theta_aligned = theta_aligned,
+  K = K,
+  iter = iter,
+  chain = chain,
+  SampleID_name = "sample_id"
+)
+p_topicProp + theme(
+  axis.title = element_text(size = 14),
+  axis.text = element_text(size = 14),
+  plot.title = element_text(size = 14))
+
+#ggsave(filename = "Topic_Prop_5.png", path="/Users/henzhwang/Desktop/",
+#       width = 15, height = 10)
+```
+### Plot ASVs distributions
+We plot the ASVs distribution in each topic.
+```{r plot cellType Dist, fig.width=10, fig.height=10}
+source(here::here("R_notebooks", 
+                  "06_LDA_scripts", "06_plotCellTypeDistribution.R"))
+
+p_cellTypeDist <- plotCellTypeDistribution(
+  spe = spe,
+  K = K,
+  beta_aligned = beta_aligned,
+  col_names_beta_hat = c("iterations", "Topic", "Cell.Type", "beta_h")
+)
+
+p_cellTypeDist
+#ggsave(filename = "cellType_dist_5.png", path="/Users/henzhwang/Desktop/",
+#       width = 15, height = 10)
+```
+
+## Diagnostic plot
+Perform computation of effective sample size for each parameter
+```{r}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_diagnosticsPlot.R"))
+
+p_diag_5_500 <- diagnosticsPlot(
+  theta_aligned = theta_aligned,
+  beta_aligned = beta_aligned,
+  iter = iter,
+  chain = chain,
+) 
+p_diag_5_500
+
+```
+
+```{r}
+# bulk effective sample size
+p_diag_5_500[[1]]
+# ggsave(filename = "ESS_5.png", path="/Users/henzhwang/Desktop/",
+#        width = 8, height = 5)
+```
+
+```{r}
+# rhat plots
+p_diag_5_500[[2]]
+#ggsave(filename = "rhat_5.png", path="/Users/henzhwang/Desktop/",
+#      width = 10, height = 6)
+```
+
+## Model Asseessement
+
+We want to perform goodness of fit test using the posterior estimates and observed data.
+```{r}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_modelAssessment.R"))
+#cellTypeIndexToPlot = c(2, 3, 5, 12, 15)
+
+p_model_assessment <- modelAssessment(dtm = dtm,
+                samples=samples,
+                warm_up_iter = NULL,
+                iter = iter,
+                cellTypeIndexToPlot = c(1:16)
+                )
+p_model_assessment
+```
+```{r}
+ggpubr::ggarrange(
+  ggpubr::ggarrange(
+    p_diag_5_2000[[1]], p_diag_5_2000[[2]],
+    ncol = 2,
+    labels = c("A", "B")
+  ),
+  # ggpubr::ggarrange(
+  #   p_model_assessment,
+  #   labels = c("C")
+  # ),
+  heights = c(3, 5),
+  nrow = 1
+)
+
+# ggsave(filename = "diag_plots.eps", device = "eps",
+#        width = 10, height = 4,
+#        path = here::here("Output", "Figures"))
+```
+## Simple function
+
+We have also written above workflow into one simple function, which will return a list of the above output. If used chain in the posterior sampling is greater than one, the function will return a list of 
+
+```{r}
+# sourcing
+source(here::here("Notebooks", 
+                  "06_LDA_scripts", "06_LDA_analysis.R"))
+```
+
+```{r}
+MB_Xeno_LDA_3_500 <- LDA_analysis(
+  spe = spe,
+  TissueID_name = "tissue_id",
+  cellType_name = "cluster_id",
+  K = 3,
+  alpha = 0.8,
+  gamma = 0.8,
+  iter = 500,
+  chain = 2,
+  col_names_theta_all = c("iteration", "Tissue", "Topic", "topic.dis"),
+  col_names_beta_hat = c("iterations", "Topic", "Cell.Type", "beta_h"),
+  stan_file_path = here::here("Notebooks", "06_LDA_scripts", "06_lda.stan"),
+  load_file = TRUE,
+  save_file = FALSE,
+  file_default = TRUE,
+  file_fold = "05_LDA_multiChains"
+)
+```
+
+# Run LDA multiple times for diffdfdnt k and iter
+```{r}
+get_lda_result(K = 5, alpha = 0.8, gamma = 0.8,
+                          dtm = dtm, iter = 2000, chains = 2,
+                          file_fold = "05_LDA_multiChains", save_file = TRUE)
+```
+
+```{r}
+MB_Xeno_LDA_3_2000 <- LDA_analysis(
+  spe = spe,
+  TissueID_name = "tissue_id",
+  cellType_name = "cluster_id",
+  K = 3,
+  alpha = 0.8,
+  gamma = 0.8,
+  iter = 2000,
+  chain = 2,
+  col_names_theta_all = c("iteration", "Tissue", "Topic", "topic.dis"),
+  col_names_beta_hat = c("iterations", "Topic", "Cell.Type", "beta_h"),
+  stan_file_path = here::here("Notebooks", "06_LDA_scripts", "06_lda.stan"),
+  load_file = TRUE,
+  save_file = FALSE,
+  file_default = TRUE,
+  file_fold = "05_LDA_multiChains"
+)
+```
+```{r}
+MB_Xeno_LDA_5_2000 <- LDA_analysis(
+  spe = spe,
+  TissueID_name = "tissue_id",
+  cellType_name = "cluster_id",
+  K = 5,
+  alpha = 0.8,
+  gamma = 0.8,
+  iter = 2000,
+  chain = 2,
+  col_names_theta_all = c("iteration", "Tissue", "Topic", "topic.dis"),
+  col_names_beta_hat = c("iterations", "Topic", "Cell.Type", "beta_h"),
+  stan_file_path = here::here("Notebooks", "06_LDA_scripts", "06_lda.stan"),
+  load_file = TRUE,
+  save_file = FALSE,
+  file_default = TRUE,
+  file_fold = "05_LDA_multiChains"
+)
+```
+
+```{r}
+MB_Xeno_LDA_8_2000 <- LDA_analysis(
+  spe = spe,
+  TissueID_name = "tissue_id",
+  cellType_name = "cluster_id",
+  K = 8,
+  alpha = 0.8,
+  gamma = 0.8,
+  iter = 2000,
+  chain = 2,
+  col_names_theta_all = c("iteration", "Tissue", "Topic", "topic.dis"),
+  col_names_beta_hat = c("iterations", "Topic", "Cell.Type", "beta_h"),
+  stan_file_path = here::here("Notebooks", "06_LDA_scripts", "06_lda.stan"),
+  load_file = TRUE,
+  save_file = FALSE,
+  file_default = TRUE,
+  file_fold = "05_LDA_multiChains"
+)
+```
+
+
+```{r fig.width=20, fig.height=15}
+# topic proportions plots 
+p_topic_prop_3_2000 <- MB_Xeno_LDA_3_2000[[9]]
+p_topic_prop_5_2000 <- MB_Xeno_LDA_5_2000[[9]]
+p_topic_prop_8_2000 <- MB_Xeno_LDA_8_2000[[9]]
+
+# plot list
+topic_prop_plot_list <- list(
+  p_topic_prop_3_2000 + remove_x,
+  p_topic_prop_5_2000 + remove_x,
+  p_topic_prop_8_2000 
+)
+
+# plot
+ggpubr::ggarrange(
+  plotlist = topic_prop_plot_list,
+  labels = c("A", "B", "C"),
+  ncol = 1, nrow = 3
+)
+
+
+#p_topic_prop_3_2000 + p_topic_prop_5_2000 + p_topic_prop_8_2000
+
+# p_topic_prop_3_2000
+# p_topic_prop_5_2000
+# p_topic_prop_8_2000
+# ggsave(filename = "Topics.png", path="/Users/henzhwang/Desktop/",
+#        width = 18, height = 15)
+```
+
+```{r}
+# cell type proportions plots
+p_cellType_prop_3_2000 <- MB_Xeno_LDA_3_2000[[10]]
+p_cellType_prop_5_2000 <- MB_Xeno_LDA_5_2000[[10]]
+p_cellType_prop_8_2000 <- MB_Xeno_LDA_8_2000[[10]]
+```
+
+
+```{r fig.width=15, fig.height=8}
+# plot list
+cellType_prop_plot_list <- list(
+  p_cellType_prop_3_2000,
+  p_cellType_prop_5_2000 + remove_y,
+  p_cellType_prop_8_2000 + remove_y
+)
+
+# plot
+ggpubr::ggarrange(
+  plotlist = cellType_prop_plot_list,
+  labels = c("A", "B", "C"),
+  common.legend = TRUE, legend = "top",
+  ncol = 3, nrow = 1
+)
+```
+

@@ -1,0 +1,289 @@
+---
+title: "Diagnostic_of_LDA_TNBC"
+author: "Xinyue_Cui"
+date: "2024-02-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Library
+```{r warning=FALSE, message=FALSE}
+#library(phyloseq)
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(stringr)
+#library(genefilter) 
+library(rstan)
+library(randomcoloR)
+library(SpatialExperiment)
+#library(DESeq2)
+# library(here)
+``` 
+### Dataset
+```{r}
+load(file = here::here("Output","RData","02_TNBC_spe_LC.rds"))
+spe
+```
+### Document-Term Matrix
+```{r dtm}
+dtm <- as.data.frame.matrix(table(spe$sample_id, spe$mm)) %>% as.matrix()
+dtm <- as.matrix(table(spe$sample_id, spe$mm))
+dim(dtm)
+dim_names <- dimnames(dtm)
+col_names <- colnames(dtm)
+```
+
+```{r}
+K <- 5
+alpha <- 0.8
+gamma <- 0.8
+x <- dtm
+chain = 4
+iter = 2000
+```
+
+### Posterior Sampling
+```{r lda result, eval=FALSE}
+source(here::here("R_notebooks","06_LDA_scripts", "06_get_lda_result.R"))
+
+patients<- get_lda_result(K = 5, alpha = 0.8, gamma = 0.8,
+                          dtm = dtm, iter = 2000, chains = 4,
+                          file_fold = "05_LDA_multiChains", save_file = TRUE)
+```
+Load the existing LDA estimations.
+```{r}
+file_fold = "05_LDA_multiChains"
+lda_file = "JABES_Endo_all_K_5_ite_2000_chains_4.RData"
+file = here::here("Output", "RData", file_fold, lda_file)
+
+load(file)
+stan.fit
+res <- rstan::extract(
+    stan.fit,
+    permuted = TRUE,
+    inc_warmup = FALSE,
+    include = TRUE
+  )
+samples <-res
+dim(stan.fit)
+```
+
+Load the existing LDA estimations.
+```{r}
+source(here::here("R_notebooks", 
+                  "06_LDA_scripts", "06_load_lda_result.R"))
+
+file_fold = "05_LDA_multiChains"
+lda_file = "JABES_Endo_all_K_5_ite_2000_chains_4.RData"
+
+lda_result <- load_lda_result(
+  file = here::here("Output", "RData", 
+                   file_fold, lda_file)
+)
+```
+
+
+```{r}
+# theta estimation
+theta <- samples$theta
+dim(theta)
+
+# beta estimation
+beta <- samples$beta
+dim(beta)
+# lda_result
+```
+
+# Now, 'theta_indices' contains all indices of columns that include 'theta'
+
+```{r}
+# Extracting 'theta' samples, including warmup
+# This will give you a matrix where rows are iterations (including warmup) and columns are chains
+# theta_samples <- res[, , theta_index]
+
+
+# ??rstan::extracts
+
+# res[,,"theta[1,1]"]
+# rownames(res[,,"chain:1"])
+```
+
+### Alignment matrix
+```{r}
+library(abind)
+source(here::here("R_notebooks", "06_LDA_scripts", "06_alignmentMatrix.R"))
+
+aligned_matrix <- alignmentMatrix(
+  theta = theta,
+  spe = spe,
+  K = K,
+  iter = iter,
+  chain = chain,
+  #cor_method = "cosine",
+  SampleID_name = "sample_id"
+)
+aligned_matrix
+```
+
+### Align topic proportion
+
+We align the topic proportion in each specimen across four chains.
+```{r align-theta}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_thetaAligned.R"))
+
+theta_aligned <- thetaAligned(
+  theta = theta, 
+  K = K, 
+  aligned = aligned_matrix, 
+  iter = iter,
+  chain = chain,
+  )
+theta_aligned 
+dim(theta_aligned)
+```
+
+### Align ASV proportion
+
+We align the ASVs proportion in each topic across four chains.
+```{r align-beta}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_betaAligned.R"))
+
+beta_aligned <- betaAligned(
+  beta = beta, 
+  K = K, 
+  aligned = aligned_matrix, 
+  iter = iter,
+  chain = chain,
+  ) 
+beta_aligned 
+```
+## Diagnostic after aligned
+## Visualization
+
+### Plot topic proportion
+
+```{r plot-topic-prop, fig.width=20, fig.height=8}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_plotTopicProportion.R"))
+
+p_topicProp <- plotTopicProportion(
+  spe = spe,
+  theta_aligned = theta_aligned,
+  K = K,
+  iter = iter,
+  chain = chain,
+  SampleID_name = "sample_id"
+)
+p_topicProp + theme(
+  axis.title = element_text(size = 14),
+  axis.text = element_text(size = 14),
+  plot.title = element_text(size = 14))
+
+#ggsave(filename = "Topic_Prop_5.png", path="/Users/henzhwang/Desktop/",
+#       width = 15, height = 10)
+```
+
+```{r plot cellType Dist, fig.width=10, fig.height=10}
+source(here::here("R_notebooks", 
+                  "06_LDA_scripts", "06_plotCellTypeDistribution.R"))
+
+p_cellTypeDist <- plotCellTypeDistribution(
+  spe = spe,
+  K = K,
+  beta_aligned = beta_aligned,
+  col_names_beta_hat = c("iterations", "Topic", "Cell.Type", "beta_h")
+)
+
+p_cellTypeDist
+#ggsave(filename = "cellType_dist_5.png", path="/Users/henzhwang/Desktop/",
+#       width = 15, height = 10)
+```
+
+## Diagnostic plot
+
+## Diagnostic plot
+Perform computation of effective sample size for each parameter
+```{r}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_diagnosticsPlot.R"))
+
+p_diag_5_2000 <- diagnosticsPlot(
+  theta_aligned = theta_aligned,
+  beta_aligned = beta_aligned,
+  iter = iter,
+  chain = chain,
+) 
+p_diag_5_2000
+
+```
+
+## Model Asseessement
+### model assessment with max 
+We want to perform goodness of fit test using the posterior estimates and observed data.
+```{r}
+# model assessment with max 
+source(here::here("R_notebooks", "06_LDA_scripts", "06_modelAssessment_max.R"))
+#cellTypeIndexToPlot = c(2, 3, 5, 12, 15)
+
+p_model_assessment_max <- modelAssessment_max(dtm = dtm,
+                res = samples,
+                warm_up_iter = NULL,
+                iter = 2000,
+                cellTypeIndexToPlot = c(1:16)
+                )
+p_model_assessment_max
+```
+
+### model assessment with mean
+```{r}
+# model assessment with mean 
+source(here::here("R_notebooks", "06_LDA_scripts", "06_modelAssessment_mean.R"))
+#cellTypeIndexToPlot = c(2, 3, 5, 12, 15)
+
+p_model_assessment_mean <- modelAssessment_mean(dtm = dtm,
+                res = samples,
+                warm_up_iter = NULL,
+                iter = 2000,
+                cellTypeIndexToPlot = c(1:16)
+                )
+p_model_assessment_mean
+```
+### model assessment with median
+```{r}
+# model assessment with median 
+source(here::here("R_notebooks", "06_LDA_scripts", "06_modelAssessment_median.R"))
+#cellTypeIndexToPlot = c(2, 3, 5, 12, 15)
+
+p_model_assessment_median <- modelAssessment_median(dtm = dtm,
+                res = samples,
+                warm_up_iter = NULL,
+                iter = 2000,
+                cellTypeIndexToPlot = c(1:16)
+                )
+p_model_assessment_median
+```
+## Trace plot Diagnostic after aligned
+```{r}
+source(here::here("R_notebooks", 
+                  "06_LDA_scripts", "06_traceplot_aligned.R"))
+
+tp <- traceplot_aligned(theta_aligned, 
+                  num_chains = 4 , 
+                  num_iterations_per_chain = 500)
+
+```
+
+## Diagnostic after aligned with warmup
+```{r}
+source(here::here("Notebooks", 
+                  "06_LDA_scripts", "06_traceplot_warmup.R"))
+
+tp2 <- traceplot_warmup(theta, spe,
+                              K=5,
+                              warm_up_iter = NULL,
+                              iterations = 2000,
+                              chain = 4,
+                              TissueID_name = "tissue_id")
+
+```

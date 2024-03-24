@@ -1,0 +1,132 @@
+---
+title: "TNBC Linear Mixed Model"
+author: "Xinyue_Cui"
+date: "2023-10-07"
+output: html_document
+---
+# packages
+```{r}
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(cytomapper)
+library(ggplot2)
+library(formattable)
+library(magrittr)
+library(lme4)
+library(car)
+```
+
+# The dataset TNBC
+
+```{r}
+TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
+TNBC$sample_id <- as.factor(TNBC$sample_id )
+TNBC$STAGE <- as.factor(TNBC$STAGE)
+TNBC$mm <- as.factor(TNBC$mm)
+TNBC$cell<- paste(TNBC$ImageNb, TNBC$cellLabelInImage, sep="_")
+```
+
+```{r}
+table(TNBC$sample_id)
+dim(TNBC)
+table(TNBC$STAGE)
+str(TNBC)
+```
+
+create a contingency table that displays the frequency counts of the combinations between the sample_id and STAGE variables from the TNBC dataset
+```{r}
+length(table(TNBC$sample_id,TNBC$STAGE))
+```
+```{r}
+# get a distribution plot of CD45
+ggplot(TNBC, aes(x = CD45)) +
+  geom_density(fill = "blue", alpha = 0.5)  +
+  labs(title = "Density Plot of logistic transformation of dsDNA_asinh_znorm ",
+       x = "Variable Value",
+       y = "Density")
+```
+Interpret of LMM
+Intercept :the estimated mean value for the group of  Ct treatment. 
+Treatement_idAraC_D2: the difference in the response between AraC_D2 and Ct.
+Treatement_idAraC_D9: the difference in the response between AraC_D9 and Ct.
+
+```{r}
+head(TNBC)
+TNBC.lme2 <- lmer(CD45~ Survival_days_capped + (Survival_days_capped| sample_id), data= TNBC)
+summary(TNBC.lme2 )
+ranef(TNBC.lme2)
+fixef(TNBC.lme2)
+```
+# Build a data set for graph
+```{r}
+subset_TNBC <- TNBC %>%
+  select(Survival_days_capped, sample_id,CD45)
+```
+
+```{r}
+ggplot(subset_TNBC ,aes(x=Survival_days_capped,y=CD45))+geom_point()+facet_wrap(~sample_id, ncol = 8, strip.position = "top")+
+  theme_minimal() 
+```
+
+```{r}
+df <- data.frame(ranef(TNBC.lme1))
+#STAGE10 is the intercept
+STAGE10 <- data.frame(
+  sample_id = df$grp[df$term == "(Intercept)"],
+  type = "mixed model",
+  STAGE1 = "STAGE10",
+  CD45 = df$condval[df$term == "(Intercept)"]
+)
+slope <- data.frame(
+  sample_id = rep(unique(subset_TNBC$sample_id), each = 8),
+  STAGE1 = rep(unique(subset_TNBC$STAGE1),times= 39),
+  type = "mixed model"
+)
+```
+
+```{r}
+merged <- slope %>%
+  left_join(df, by = c("sample_id" = "grp", "STAGE1" = "term"))
+merged_data <- merged  %>%
+  left_join(STAGE10, by = c("sample_id" = "sample_id"))
+
+slope_final <- data.frame(
+sample_id =  merged_data$sample_id,
+type= "mixed model",
+STAGE1 = merged_data$STAGE1.x,
+CD45 = merged_data$condval+merged_data$CD45
+)
+
+val_CD45 <- na.omit(rbind(STAGE10,slope_final), cols = "CD45")
+```
+
+```{r}
+#fixed 
+
+fixef(TNBC.lme1)
+df_fix <- data.frame(fixef(TNBC.lme1))
+
+fixed <- data.frame(
+  sample_id = rep(unique(subset_TNBC$sample_id), each = 8),
+  type = "all",
+  STAGE1 = rep(unique(subset_TNBC$STAGE1),times= 39),
+  CD45 = rep(df_fix$fixef.TNBC.lme1.,each = 39)
+
+)
+
+# Combine the data
+obs <- subset_TNBC %>%
+  select(sample_id,type, STAGE1 ,CD45)
+
+plot_data <-rbind(obs,val_CD45,fixed)
+plot_data$STAGE <- str_remove(plot_data$STAGE1, "STAGE")
+plot_data
+```
+
+```{r}
+#plot
+ggplot(plot_data ,aes(x=STAGE,y=CD45,color = type))+geom_point()+facet_wrap(~sample_id, ncol = 8, strip.position = "top")+
+  theme_minimal() 
+```
+

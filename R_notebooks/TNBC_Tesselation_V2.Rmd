@@ -1,0 +1,375 @@
+---
+title: "Tesselation_V2"
+author: "Xinyue_Cui"
+date: "2024-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library
+
+```{r library, warning=FALSE, message=FALSE}
+library(rstan)
+library(dplyr)
+library(EBImage)
+library(ggplot2)
+library(spatstat)
+library(randomcoloR)
+library(SpatialExperiment)
+library(sp)
+library(tidyr)
+library(tibble)
+library(maptools)
+library(spdep)
+library(adespatial)
+```
+
+## Dataset
+
+Load the SPE object.
+
+```{r}
+load(file = here::here("Output","RData","02_TNBC_spe_LC.rds"))
+spe
+```
+
+
+## Posterior Sampling
+
+Load posterior sampling results of 5 topics using 4 chains and 2000 iterations on the dataset.
+
+```{r}
+source(here::here("R_notebooks", 
+                  "06_LDA_scripts", "06_LDA_analysis.R"))
+
+TNBC_LDA_5_2000 <- LDA_analysis(
+    spe = spe,
+    SampleID_name = "sample_id",
+    cellType_name = "mm",
+    K = 5,
+    alpha = 0.8,
+    gamma = 0.8,
+    warm_up_iter = NULL,
+    iter = 2000,
+    chain = 4,
+    col_names_theta_all = c("iteration", "Sample", "Topic", "topic.dis"),
+    col_names_beta_hat = c("iterations", "Topic", "Cell.Type", "beta_h"),
+    stan_file_path = here::here("R_notebooks", "06_LDA_scripts", "06_lda.stan"),
+    cellTypeIndexToPlot = c(1:16),
+    load_file = TRUE,
+    save_file = FALSE,
+    file_default = TRUE,
+    file_fold = "05_LDA_multiChains"
+)
+```
+Load the existing LDA estimations.
+```{r}
+file_fold = "05_LDA_multiChains"
+lda_file = "JABES_Endo_all_K_5_ite_2000_chains_4.RData"
+file = here::here("Output", "RData", file_fold, lda_file)
+
+load(file)
+stan.fit
+res <- rstan::extract(
+    stan.fit,
+    permuted = TRUE,
+    inc_warmup = FALSE,
+    include = TRUE
+  )
+samples <-res
+dim(stan.fit)
+```
+## Cell Type Proportion in each Topics
+
+```{r}
+beta_hat <- TNBC_LDA_5_2000$beta_aligned
+dim(beta_hat)
+dimnames(beta_hat)
+```
+
+```{r}
+library(sf)
+library(terra)
+library(spatstat)
+library(tmap)
+library(spdep)
+```
+
+```{r}
+s_coor <- spatialCoords(spe) |>
+  data.frame()
+
+df <- bind_cols(
+  sample_id = spe$sample_id, 
+  cell_id = dimnames(assay(spe))[[2]], 
+  cell_type = spe$mm,
+  cell_size = spe$cellSize
+  ) |>
+  data.frame() |>
+  cbind(s_coor) |>
+  left_join(beta_median, by = "cell_type") |>
+  mutate(tumor_not = ifelse(cell_type == "Other", 1, 0))
+
+```
+
+
+```{r}
+sample_names <- df$sample_id %>%
+  unique() %>%
+  as.list()
+
+ppp_list <- list()
+
+for (i in seq_along(sample_names)) {
+  spe_temp <- spe[ ,spe$sample_id == sample_names[[i]]]
+  centroidX <- spatialCoords(spe_temp)[, 1]
+  centroidY <- spatialCoords(spe_temp)[, 2]
+
+  # Ensure df_temp is not empty
+    ppp_temp <- ppp(
+      centroidX,
+      centroidY,
+      window = owin(
+        c(0, max(centroidX)),  # Correct range for x
+        c(0, max(centroidY))   # Correct range for y
+        ),
+      marks = factor(spe_temp$mm)
+      
+    )
+
+    ppp_list[[i]] <- ppp_temp
+  }
+
+
+names(ppp_list) <- sample_names
+```
+
+## Create a point pattern for each patient
+
+```{r}
+sam_names <- df$sample_id |>
+  unique() |>
+  as.list() 
+
+ppp_lst <- list()
+
+for(i in seq_along(sam_names)){
+  df_temp <- dplyr::filter(df, sample_id == sam_names[i])
+
+  ppp_temp <- ppp(
+    x = df_temp$centroidX, 
+    y = df_temp$centroidY,
+    window = owin(
+      c(0,max(df_temp$centroidX)),
+      c(0,max(df_temp$centroidY))
+      ),
+    marks = select(
+      df_temp, 
+      cell_type,  
+      cell_size, 
+      tumor_not, 
+      Topic_1, 
+      Topic_2, 
+      Topic_3, 
+      Topic_4, 
+      Topic_5
+      )
+    )
+
+  ppp_temp$marks$tumor_not <- factor(
+    ppp_temp$marks$tumor_not
+    )
+  ppp_lst[[i]] <- ppp_temp
+  
+}
+
+names(ppp_lst) <- sam_names
+```
+
+
+```{r}
+class(ppp_list[[1]])
+A <- by(ppp_list[[1]], FUN = adaptive.density)
+plot(A)
+
+```
+```{r}
+ppp_4<-ppp_list[[4]]
+dir_tess_4 <- dirichlet(ppp_4)
+plot(dir_tess_4)
+#plot(dirichlet(ppp_list[[4]]))
+plot(ppp_4, which.marks = c("cell_size", "tumor_not"), cols = c("red", "blue")) 
+
+```
+```{r}
+solist(ppp_list[[4]], ppp_list[[11]])
+
+L <- as.anylist(lapply(ppp_list[c(4,11)], Lest) )
+plot(L, equal.scales=TRUE)
+```
+
+```{r}
+polygon_data <- extract_polygons(dir_tess_4)
+dir_poly_4 <- convert_to_SpatialPolygons(polygon_data)
+plot(dir_poly_4)
+
+```
+### Tessellation
+
+```{r}
+dir_tess_p4 <- dirichlet(ppp_4)
+dirichlet(ppp_4,10)
+plot(dir_tess_p4)
+```
+```{r}
+ppp_4$tile
+# Plot the first 6 tiles
+plot(dir_tess_p4 , which = 1:6)
+library(maptools) 
+library(spatstat.geom)
+library(spatstat.core)
+library(sf)
+library(spatstat)
+
+tiles_list <- tess2SP(dir_tess_p4)
+```
+```{r}
+voronoi_tess <- dirichlet(ppp_4)
+```
+
+### Convert tiles to polygons
+
+```{r}
+dir_poly_p4 <- as(dir_tess_p4, "SpatialPolygons")
+plot(dir_poly_p4)
+```
+
+
+
+
+```{r}
+library(spdep)
+library(sf)
+library(sp)
+library(lwgeom)
+
+## queen's distance
+dir_poly_nb_20 <- poly2nb(dir_poly_20)
+dir_poly_net_20 <- nb2lines(dir_poly_nb_20, coords = coordinates(dir_poly_20))
+
+dir_poly_lw1_20 <- nb2listw(dir_poly_nb_20, zero.policy = TRUE, style = "W")
+print(dir_poly_lw1_20)
+
+## rook's distance
+dir_poly_nb_rook_20 <- poly2nb(dir_poly_20, queen = FALSE)
+dir_poly_net_rook_20 <- nb2lines(dir_poly_nb_rook_20, coords = coordinates(dir_poly_20))
+
+dir_poly_lw1_rook_20 <- nb2listw(dir_poly_nb_rook_20, zero.policy = TRUE, style = "W")
+# print.listw(dir_poly_lw1_rook_s1, zero.policy = TRUE)
+```
+
+### global Moran's I
+
+```{r}
+df$centroid_x <- spatialCoords(spe)[, 1]
+df$centroid_y <- spatialCoords(spe)[, 2]
+
+# moran.test(spa_compa_s1[spa_compa_s1$tumor_not == 0,]$centroid_x, dir_poly_lw1_s1, zero.policy = TRUE)
+# moran.test(spa_compa_s1[spa_compa_s1$tumor_not == 0,]$centroid_y, dir_poly_lw1_s1, zero.policy = TRUE)
+```
+
+```{r}
+cut_ppp_20 <- cut(ppp_20, dir_tess_20, labels = TRUE)
+plot(cut_ppp_20)
+plot(quadratcount(cut_ppp_s1))
+split_ppp_20 <- split(cut_ppp_20, dir_tess_20)
+
+plot(split_ppp_20[1:30], use.marks = FALSE)
+plot(split_ppp_20[31:60], use.marks = FALSE)
+plot(split_ppp_20[61:90], use.marks = FALSE)
+plot(split_ppp_20[91:120], use.marks = FALSE)
+```
+
+### Convert polygons to neighborhood
+
+The function poly2nb allows to define neighborhood when the sampling sites are polygons and not points (two regions are neighbors if they share a common boundary).
+
+```{r}
+xx <- poly2nb(dir_poly_20)
+plot(dir_poly_20, border = "grey")
+plot(xx, coordinates(dir_poly_20),  pch = 20, col = "red")
+title(main="Neighborhood for polygons")
+```
+
+```{r}
+xx[[1]]
+```
+```{r}
+listwgab <- nb2listw(xx)
+listwgab
+
+names(listwgab)
+
+listwgab$neighbours[[1]]
+
+listwgab$weights[[1]]
+```
+```{r}
+mem.gab <- mem(listwgab)
+mem.gab
+```
+
+```{r}
+barplot(attr(mem.gab, "values"), 
+        main = "Eigenvalues of the spatial weighting matrix", cex.main = 0.7)
+```
+```{r warning=FALSE, message=FALSE}
+
+dir_poly_20$MEM1 <- mem.gab[, "MEM1"]
+dir_poly_20$MEM2 <- mem.gab[, "MEM2"]
+dir_poly_20$MEM3 <- mem.gab[, "MEM3"]
+
+tmap::tm_shape(dir_poly_20) +
+  tmap::tm_polygons(col = "MEM1")
+  
+tmap::tm_shape(dir_poly_20) +
+  tmap::tm_polygons(col = "MEM2")
+
+tmap::tm_shape(dir_poly_20) +
+  tmap::tm_polygons(col = "MEM3")
+
+```
+
+
+### Test each MEM
+
+Default `moran.randtest` - tests against the alternative hypothesis of positive autocorrelation.
+
+```{r eval = FALSE}
+moranI <- moran.randtest(mem.gab, listwgab, 99)
+moranI
+
+# save(moranI, file = "moranI.RData")
+# load("moranI.RData")
+```
+
+```{r}
+head(attr(mem.gab, "values") / moranI$obs)
+
+signi <- which(moranI$pvalue < 0.05)
+length(signi)
+```
+
+```{r}
+signi[100]
+dir_poly_20$MEM100 <- mem.gab[, signi[100]]
+
+
+tmap::tm_shape(dir_poly_20) +
+  tmap::tm_polygons(col = "MEM100")
+  
+```
+
