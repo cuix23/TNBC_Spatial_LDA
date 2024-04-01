@@ -1,0 +1,628 @@
+---
+title: "12_Spatial_LDA_patient_12"
+author: "Xinyue_Cui"
+date: "2024-03-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r , packages}
+library(rstan)
+library(dplyr)
+library(EBImage)
+library(ggplot2)
+library(spatstat)
+library(randomcoloR)
+library(SpatialExperiment)
+library(sp)
+library(tidyr)
+library(tibble)
+library(maptools)
+library(spdep)
+library(adespatial)
+```
+##spe
+```{r}
+load(file = here::here("Output","RData","02_TNBC_spe_LC.rds"))
+spe
+```
+##ppp_list
+```{r}
+s_coor <- spatialCoords(spe) |>
+  data.frame()
+
+df <- bind_cols(
+  sample_id = spe$sample_id, 
+  cell_id = dimnames(assay(spe))[[2]], 
+  cell_type = spe$mm,
+  cell_size = spe$cellSize
+  ) |>
+  data.frame() |>
+  cbind(s_coor) |>
+  left_join(mean_cluster_prop, by = "cell_type") |>
+  mutate(tumor_not = ifelse(cell_type == "Other", 1, 0))
+```
+
+```{r}
+sample_names <- df$sample_id %>%
+  unique() %>%
+  as.list()
+
+ppp_list <- list()
+
+for (i in seq_along(sample_names)) {
+  spe_temp <- spe[ ,spe$sample_id == sample_names[[i]]]
+  centroidX <- spatialCoords(spe_temp)[, 1]
+  centroidY <- spatialCoords(spe_temp)[, 2]
+
+  # Ensure df_temp is not empty
+    ppp_temp <- ppp(
+      centroidX,
+      centroidY,
+      window = owin(
+        c(0, max(centroidX)),  # Correct range for x
+        c(0, max(centroidY))   # Correct range for y
+        ),
+      marks = factor(spe_temp$mm)
+      
+    )
+
+    ppp_list[[i]] <- ppp_temp
+  }
+
+names(ppp_list) <- sample_names
+```
+## tiles
+```{r}
+set.seed(1234) 
+ppp_4<-ppp_list[[4]]
+ppp_12<-ppp_list[[11]]
+
+clusters_12 <- kmeans(cbind(ppp_12$x, ppp_12$y), centers = 1000)
+ppp_12$cluster <- as.factor(clusters_12$cluster)
+# clusters_12
+```
+
+```{r}
+spe_4 <- spe[, spe$sample_id == "Sample_04"]
+spe_12 <- spe[, spe$sample_id == "Sample_12"]
+cell_tile_12 <- data.frame(cell_id = dimnames(assay(spe_12))[[2]],
+                        cell_type = spe_12$mm,
+                        tile_align = ppp_12$cluster)
+cell_tile_12   
+```
+## centroides of tiles
+```{r}
+# Extract cluster centroids
+centroids_12 <- aggregate(cbind(ppp_12$x, ppp_12$y), by=list(ppp_12$cluster), FUN=mean)
+centroids_ppp_12 <- ppp(x=centroids_12$V1, y=centroids_12$V2, window=ppp_12$window)
+
+centroids_voronoi <- dirichlet(centroids_ppp_12)
+plot(centroids_voronoi)
+```
+
+```{r}
+tile_df_12  <- data.frame(tile = centroids_12$Group.1, x = centroids_12$V1, y = centroids_12$V2)
+tile_df_12 
+```
+
+## cell id in each tile (document)
+```{r}
+library(dplyr)
+library(purrr)
+# Group cell_id by 'tile_align' 
+cell_groups <- cell_tile_12 %>%
+  group_by(tile_align) %>%
+  summarize(cells = list(cell_id)) %>%
+  ungroup()
+
+# left Join the groups
+tile_df_12 <- tile_df_12 %>%
+  left_join(cell_groups, by = c("tile" = "tile_align"))
+tile_df_12 
+```
+
+## cell_type freqency table
+```{r}
+library(dplyr)
+
+cell_type_freq<- list()
+
+for (i in 1:dim(tile_df_12)[1]) {
+  cell_tile_sub <- cell_tile_12 %>% filter(tile_align == i)
+  cell_type_freq[[i]] <- table(cell_tile_sub$cell_type)
+}
+
+
+tile_df_12 <- tile_df_12 %>%
+  mutate(cell_type_count = cell_type_freq)
+tile_df_12
+```
+
+
+```{r}
+tile_df_12$cell_type_count[[1]]
+```
+## Create long data
+
+```{r}
+cell_type_df <- data.frame(
+  mm = levels(TNBC$mm),
+  cell_type_id = seq_along(levels(TNBC$mm))
+) %>%
+  rename("cell_type"="mm")
+
+print(cell_type_df)
+```
+
+```{r}
+tiles_long_12 <- lapply(as.list(tile_df_12$tile), function(tile) {
+  words_vector <- names(tile_df_12$cell_type_count[[tile]])
+  counts_vector <- tile_df_12$cell_type_count[[tile]]
+  
+  # dataframe where each word is repeated according to its count
+  data <- data.frame(
+    tile_id = rep(tile, times = sum(counts_vector)),
+    cell_type = rep(words_vector, times = counts_vector),
+    stringsAsFactors = FALSE  # To keep 'word' as character type
+  )
+  
+  return(data)
+}) %>%
+  bind_rows()  # Combine all the individual dataframes into one
+
+dim(tiles_long_12)
+```
+
+```{r}
+tiles_long_12 <- tiles_long_12 %>%
+  left_join(cell_type_df, by= "cell_type")
+tiles_long_12
+```
+
+## topic center in result of LDA
+In 08_TNBC_topic proportion, import the libraries, read the csv, run the left join to create mean_result.
+```{r}
+# from 08_TNBC_topic_Proportion
+mean_result_4 <- mean_result[mean_result$sample_id == '4', ]
+mean_result_12 <- mean_result[mean_result$sample_id == '12', ]
+
+S12_info <- mean_result_12  %>%
+  select(cell_id,centroidX, centroidY,topic_assign)
+S12_info <- S12_info %>% left_join(cell_tile_12, by = "cell_id")
+S12_info
+```
+
+```{r}
+library(dplyr)
+
+# Calculate the mean of centroidX and centroidY for each topic
+topic_means_12 <- mean_result_12 %>%
+  group_by(topic_assign) %>%
+  summarize(
+    mean_centroidX = mean(centroidX, na.rm = TRUE),
+    mean_centroidY = mean(centroidY, na.rm = TRUE)
+  ) %>%
+  ungroup()
+```
+
+## Compute spatial proximity
+
+```{r}
+# topic_centers- use result from LDA 
+
+# calculate inverse distance weighting from each tile (doc) to the topic
+calculate_influence <- function(
+    tile_x, 
+    tile_y, 
+    topic_means
+    ) {
+  
+  distances <- sqrt((topic_means$mean_centroidX - tile_x)^2 + (topic_means$mean_centroidY - tile_y)^2)
+  # avoid division by zero by adding a small constant to distances
+  influences <- 1 / (distances + 1e-6)
+  # normalize influences so they sum to 1 for each document
+  normalized_influences <- influences / sum(influences)
+  return(normalized_influences)
+}
+
+# apply calculate_influence to each document to create the spatial_influence matrix
+spatial_influence_12 <- t(
+  sapply(1:nrow(tile_df_12), 
+         function(i) {
+  calculate_influence(tile_df_12$x[i], tile_df_12$y[i], topic_means_12)
+}
+)
+)
+
+head(spatial_influence_12)
+```
+# Apply Spatial LDA
+```{r}
+# we know the simulated data, so 
+# N = sum(unlist(lapply(word_counts, function(x){sum(x)})))
+N <- dim(tiles_long_12)[1]
+D <- length(unique(tiles_long_12$tile_id))
+types <- tiles_long_12$cell_type_id
+tiles <- tiles_long_12$tile_id
+K <- 5
+```
+
+```{r}
+tiles<-as.vector(tiles)
+tiles<-as.integer(tiles)
+type(tiles)
+is.vector(tiles)
+is.integer(tiles)
+
+```
+```{r}
+stan_data_12 <- list(
+  D = D,
+  V = length(unique(types)),
+  K = K,
+  N = N,
+  words = types,
+  docs = tiles,
+  spatial_influence = spatial_influence_12
+)
+
+str(stan_data_12)
+```
+
+```{r}
+fit <- stan(
+  file = "/Users/cuixinyue/Desktop/TNBC_analysis/R_notebooks/slda.stan", 
+  data = stan_data_12, 
+  iter = 2000, 
+  chains = 1
+  )
+```
+
+```{r save_slda}
+save(fit, fit, file = "/Users/cuixinyue/Desktop/TNBC_analysis/R_notebooks/slda_lda_tile_1000_chain_1_patient12.RData")
+```
+
+
+Load the existing LDA estimations.
+```{r}
+# file_fold = "05_LDA_multiChains"
+# lda_file = "JABES_Endo_all_K_5_ite_2000_chains_4.RData"
+# file = here::here("Output", "RData", file_fold, lda_file)
+# 
+# load(file)
+fit
+result_12<- rstan::extract(
+    fit,
+    permuted = TRUE,
+    inc_warmup = FALSE,
+    include = TRUE
+  )
+
+apply(result_12$theta[,3,], 2, median)
+dim(result_12$theta[,3,])
+```
+
+```{r}
+est_doc_topic_prop_lda <- apply(
+  result_12$theta, 
+  MARGIN = c(2, 3), 
+  median
+  )
+est_doc_top_lda <- paste0(
+  "topic",
+  max.col(est_doc_topic_prop_lda)
+  )
+
+df_doc_top_lda <- as.data.frame(est_doc_topic_prop_lda)
+df_doc_top_lda $tile <- seq_len(nrow(df_doc_top_lda ))
+df_doc_top_lda <- df_doc_top_lda %>%
+  rename(
+    topic1_slda = V4,
+    topic2_slda = V2,
+    topic3_slda = V3,
+    topic4_slda = V1,
+    topic5_slda = V5
+  )
+
+df_doc_top_lda$tile <- as.factor(df_doc_top_lda$tile)
+
+# Now try the join again
+S12_info_slda <- S12_info %>% left_join(df_doc_top_lda, by = c("tile_align" = "tile"))
+S12_info_slda
+
+```
+
+# Spatial LDA topic  plots
+```{r}
+p_slda_s12_t1<- ggplot(S12_info_slda, aes(x = centroidX, y = centroidY, color = topic1_slda)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", 
+                       limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                       oob = scales::squish) +  # Squish values outside the range into the limits
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+p_slda_s12_t1
+```
+
+```{r}
+p_slda_s12_t2<- ggplot(S12_info_slda, aes(x = centroidX, y = centroidY, color = topic2_slda)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", 
+                       limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                       oob = scales::squish) +  # Squish values outside the range into the limits
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+p_slda_s12_t2
+```
+
+```{r}
+p_slda_s12_t3 <-ggplot(S12_info_slda, aes(x = centroidX, y = centroidY, color = topic3_slda)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", 
+                       limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                       oob = scales::squish) +  # Squish values outside the range into the limits
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+
+p_slda_s12_t3
+```
+```{r}
+p_slda_s12_t4 <- ggplot(S12_info_slda, aes(x = centroidX, y = centroidY, color = topic4_slda)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", 
+                       limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                       oob = scales::squish) +  # Squish values outside the range into the limits
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+p_slda_s12_t4
+```
+
+```{r}
+
+p_slda_s12_t5 <- ggplot(S12_info_slda, aes(x = centroidX, y = centroidY, color = topic5_slda)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", 
+                       limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                       oob = scales::squish) +  # Squish values outside the range into the limits
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+p_slda_s12_t5
+```
+
+
+
+
+
+# diagnostics
+```{r}
+slda_theta<- result_12$theta
+slda_phi<- result_12$phi
+dim(result_12$phi)
+dim(result_12$theta)
+chain <- 4
+```
+
+```{r}
+iterUse = 250
+# for theta
+ Rhat_theta <- matrix(
+    nrow = dim(slda_theta )[2],
+    ncol = dim(slda_theta)[3]
+  )
+  
+  ESS_bulk_theta <- matrix(
+    nrow = dim(slda_theta)[2],
+    ncol = dim(slda_theta)[3]
+  )
+  
+  for(sam in 1:dim(slda_theta)[2]){
+    for(top in 1:dim(slda_theta)[3]){
+      sims_theta <- matrix(
+        slda_theta[ ,sam , top],
+        nrow = (iterUse),
+        ncol = chain,
+        byrow = FALSE
+      )
+      Rhat_theta[sam, top] <- rstan::Rhat(sims_theta)
+      ESS_bulk_theta[sam, top] <- rstan::ess_bulk(sims_theta)
+    }
+    
+  }
+
+Rhat_theta <- as.vector(Rhat_theta)
+ESS_bulk_theta <- as.vector(ESS_bulk_theta)
+
+
+# For phi
+  
+  Rhat_phi <- matrix(
+    nrow = dim(slda_phi)[2],
+    ncol = dim(slda_phi)[3]
+  )
+  ESS_bulk_phi <- matrix(
+    nrow = dim(slda_phi)[2],
+    ncol = dim(slda_phi)[3]
+  )
+  
+  
+  for(top in 1:dim(slda_phi)[2]){
+    for(fea in 1:dim(slda_phi)[3]){
+      sims_phi <- matrix(
+        slda_phi[ , top, fea],
+        nrow = (iterUse),
+        ncol = chain,
+        byrow = FALSE)
+      Rhat_phi[top, fea] <- rstan::Rhat(sims_phi)
+      ESS_bulk_phi[top, fea] <- rstan::ess_bulk(sims_phi)
+      
+    }
+    
+  }
+  
+  Rhat_phi <- as.vector(Rhat_phi)
+  ESS_bulk_phi <- as.vector(ESS_bulk_phi)
+  
+
+# combine the R_hat and ESS_bulk
+Rhat <- c(Rhat_theta, Rhat_phi)
+ESS_bulk <- c(ESS_bulk_theta, ESS_bulk_phi)
+
+#plot for R_hat
+# R hat ~ 1.05
+  p_rhat <- ggplot2::ggplot(
+    data.frame(Rhat = Rhat)
+  ) +
+    ggplot2::geom_histogram(
+      aes(x = Rhat),
+      fill = "lavender",
+      colour = "black",
+      bins = 100
+    ) +
+    ggplot2::theme(
+      plot.title = element_text(hjust = 0.5)
+    )  +
+    ggplot2::theme_minimal(base_size = 20) +
+    ggplot2::xlab("")
+  
+  
+  
+  
+  # ESS bulk and ESS tail at least 100 per Markov Chain in order to be reliable and indicate that estimates of respective posterior quantiles are reliable
+  
+  p_ess_bulk <- ggplot2::ggplot(
+    data.frame(ESS_bulk = ESS_bulk)
+  ) +
+    ggplot2::geom_histogram(
+      aes(x = ESS_bulk),
+      fill = "lavender",
+      colour = "black",
+      bins = 100
+    ) +
+    ggplot2::theme(
+      plot.title = element_text(hjust = 0.5)
+    )   +
+    ggplot2::theme_minimal(
+      base_size = 20
+    ) +
+    ggplot2::xlab("")
+
+list(p_ess_bulk, p_rhat)
+```
+# model assesment
+### dtm
+```{r}
+dtm <- as.data.frame.matrix(table(spe$sample_id, spe$mm)) %>% as.matrix()
+dtm <- as.matrix(table(spe$sample_id, spe$mm))
+dim(dtm)
+dim_names <- dimnames(dtm)
+col_names <- colnames(dtm)
+
+```
+### sim
+```{r}
+result_sim <- array(dim=c(250, 1000, 16))
+tiles=1000
+iterUse=250
+# Perform the multiplication using a for loop for the dimensions
+for (i in 1:iterUse) {
+  for (j in 1:tiles) {
+    for (k in 1:16) {
+      # Multiply the corresponding elements and sum over the common dimension
+      result_sim [i, j, k] <- sum(slda_theta[i, j, ] * slda_phi[i, , k])
+    }
+  }
+}
+
+# Check the structure of the created 'sim' array
+dim(result_sim)
+result_sim <- result_sim*length(ppp_12$cluster)
+```
+### Assemesent plot
+```{r}
+patient_id_index = 4
+warm_up_iter = NULL
+iter = 2000
+cellTypeIndexToPlot = c(1:16)
+value <- Var2 <- NULL
+  
+  # determine the iteration used in posterior sampling (subtract warm up iterations)
+  if (is.null(warm_up_iter)) {
+    iterUse = iter / 2
+  } else {
+    iterUse = iter - warm_up_iter
+  }
+  
+  x <- dtm
+
+    x_cellCount <- data.frame(
+    Var1 = rep(
+      "x_mean_obs",
+      dim(x)[2]
+    ),
+    Var2 = colnames(x),
+    count = x[patient_id_index,] ## change here for different patient
+  )
+   x_cellCount <- x_cellCount[cellTypeIndexToPlot, ]
+  # draws from posterior predictive distribution
+  ### x_sim <- result$theta[1:iterUse, , ] # iteration * tissues * topics
+  mean_all <- apply(result_sim[1, , ], 2, mean)
+  for (i in 2:iterUse){
+    mean_x_sim_i <- apply(
+      result_sim[i, ,], 
+      2,
+      mean)
+    mean_all <- rbind(mean_all, mean_x_sim_i)
+  }
+  
+  rownames(mean_all) <- c(
+    paste0(
+      "x_mean_rep",
+      seq(1, iterUse)
+    )
+  )
+  
+  colnames(mean_all) <- colnames(x)
+  
+  mean_all <- mean_all[, cellTypeIndexToPlot]
+  mean_all_long <- reshape2::melt(mean_all)
+  
+  p_hist <- ggplot2::ggplot(
+    data = mean_all_long
+  ) +
+    ggplot2::geom_histogram(
+      aes(
+        x = value,
+        group = Var2
+      ),
+      color = "#0072B2",
+      fill = "#0072B2",
+      bins = 50) +
+    ggplot2::xlab("mean")+
+    
+    ggplot2::facet_wrap(~Var2, nrow = 4, scales = "free_x") +
+    
+    ggplot2::geom_vline(
+      data = x_4_cellCount,
+      aes(xintercept = count),
+      color = "#CC79A7"
+    ) +
+    ggplot2::theme_update(
+      text = element_text(size = 8)
+    )
+  
+p_hist 
+```
