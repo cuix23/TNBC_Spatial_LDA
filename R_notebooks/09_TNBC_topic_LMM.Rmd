@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# packages
+### packages
 ```{r}
 library(readr)
 library(dplyr)
@@ -25,7 +25,7 @@ library(car)
 # load(file = here::here("R_notebooks", "TNBC_topic_proportion.Rmd"))
 ```
 
-# The dataset TNBC
+## The dataset TNBC
 
 ```{r}
 TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
@@ -41,7 +41,7 @@ table(TNBC$STAGE)
 str(TNBC)
 ```
 
-# Analysis on spa_list[[1]]( first iteration)
+## Analysis on spa_list[[1]]( first iteration)
 ```{r}
 # Access the data frame within the list and convert the columns
 spa_list[[1]]$sample_id <- as.factor(spa_list[[1]]$sample_id)
@@ -54,31 +54,32 @@ spa_list[[1]][] <- lapply(spa_list[[1]], function(x) if(is.character(x)) factor(
 # To check if the conversion has been successful
 str(spa_list[[1]])
 ```
-# analysis of mean_result
+## analysis of mean_result
 ```{r}
 mean_result <-  cbind(TNBC, cell_id = dimnames(assay(spe))[[2]] ) %>%left_join(mean_cluster_prop, by = c("mm" = "cell_type"))
 head(mean_result)
 ```
-# Linear mixed model on proportion of topic 1 of mean result
+## Linear mixed model on proportion of topic 1 of mean result
 ```{r}
 predictor <- scale(mean_result[, c("Survival_days_capped", "cellSize")])
 
-formula <- Topic_1 ~ predictor + STAGE+ (1| sample_id)
+sum(mean_result$Topic_1 == 1)
+mean_result$Topic_1_logit <- log(mean_result$Topic_1 /(1-mean_result$Topic_1 ))
+
+formula <- Topic_1_logit  ~ predictor + STAGE+ (1| sample_id)
 TNBC_t1_lmm_mean <- lmer(formula , data= mean_result)
 summary(TNBC_t1_lmm_mean)
 ranef(TNBC_t1_lmm_mean)
 fixef(TNBC_t1_lmm_mean)
 
 mean_result$topic1_pred <- predict(TNBC_t1_lmm_mean)
-sqrt(sum(mean_result$Topic_1-mean_result$topic1_pred))
+mean((mean_result$Topic_1_logit - mean_result$topic1_pred)^2)
 
 mean_result_4 <- mean_result[mean_result$sample_id == '4', ]
 
-library(ggplot2)
-
 ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color = topic1_pred)) +
   geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
-  scale_color_gradient(low = "white", high = "black") +  # Adjust the color gradient if needed
+  scale_color_gradient(low = "white", high = "red") +  # Adjust the color gradient if needed
   theme_minimal() +
   labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
   theme(legend.position = "right")  # Adjust legend position if needed
@@ -87,81 +88,74 @@ mean_result_12 <- mean_result[mean_result$sample_id == '12', ]
 
 ggplot(mean_result_12, aes(x = centroidX, y = centroidY, color = topic1_pred)) +
   geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
-  scale_color_gradient(low = "white", high = "black") +  # Adjust the color gradient if needed
+  scale_color_gradient(low = "white", high = "red") +  # Adjust the color gradient if needed
   theme_minimal() +
   labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
   theme(legend.position = "right")  # Adjust legend position if needed
 
 ```
+## topic LMM on all topic
 ```{r}
-topic_number = 4
-topic_name <- paste0("Topic_", topic_number)
-topic_name
+mean_result$Topic_2_logit <- log(mean_result$Topic_2 /(1-mean_result$Topic_2))
+mean_result$Topic_3_logit <- log(mean_result$Topic_3 /(1-mean_result$Topic_3 ))
+mean_result$Topic_4_logit <- log(mean_result$Topic_4 /(1-mean_result$Topic_4 ))
+mean_result$Topic_5_logit <- log(mean_result$Topic_5 /(1-mean_result$Topic_5 ))
+
+formula_2 <- Topic_2_logit  ~ predictor + STAGE+ (1| sample_id)
+TNBC_t2_lmm_mean <- lmer(formula_2 , data= mean_result)
+formula_3 <- Topic_3_logit  ~ predictor + STAGE+ (1| sample_id)
+TNBC_t3_lmm_mean <- lmer(formula_3 , data= mean_result)
+formula_4 <- Topic_4_logit  ~ predictor + STAGE+ (1| sample_id)
+TNBC_t4_lmm_mean <- lmer(formula_4 , data= mean_result)
+formula_5 <- Topic_5_logit  ~ predictor + STAGE+ (1| sample_id)
+TNBC_t5_lmm_mean <- lmer(formula_5 , data= mean_result)
+
+mean_result$topic2_pred <- predict(TNBC_t2_lmm_mean)
+mean((mean_result$Topic_2_logit - mean_result$topic2_pred)^2)
+mean_result$topic3_pred <- predict(TNBC_t3_lmm_mean)
+mean((mean_result$Topic_3_logit - mean_result$topic3_pred)^2)
+mean_result$topic4_pred <- predict(TNBC_t4_lmm_mean)
+mean((mean_result$Topic_4_logit - mean_result$topic4_pred)^2)
+mean_result$topic5_pred <- predict(TNBC_t5_lmm_mean)
+mean((mean_result$Topic_5_logit - mean_result$topic5_pred)^2)
 ```
 
-# function for Linear mixed model on proportion of topics of mean result, output the plot
-```{r}
-predictor <- scale(mean_result[, c("Survival_days_capped", "cellSize")])
-formula <- Topic_2 ~ predictor + STAGE+ (1| sample_id)
-library(lme4)
-library(ggplot2)
 
-topic_LMM_pred <- function(mean_result, topic_number, sample_number){
-  predictor <- scale(mean_result[, c("Survival_days_capped", "cellSize")])
-  topic_name <- paste0("Topic_", topic_number)
-  formula <- topic_name ~ predictor + STAGE+ (1| sample_id)
-  
-  # Fit the linear mixed model
-  TNBC_lmm_mean <- lmer(formula, data = mean_result)
-  
-  # Predict values and calculate error
-  topic_pred_col_name <- paste0("Topic_", topic_number, "_pred")
-  mean_result[[topic_pred_col_name]] <- predict(TNBC_lmm_mean)
-  
-  topic_col_name <- paste0("Topic_", topic_number)
-  error <- sqrt(sum((mean_result[[topic_col_name]] - mean_result[[topic_pred_col_name]])^2, na.rm = TRUE))
-  
-  mean_result_sample <- mean_result[mean_result$sample_id == sample_number, ]
-  
-  # Generate the plot
-  result_plot <- ggplot(mean_result_sample, aes(x = centroidX, y = centroidY, color = get(topic_pred_col_name))) +
-    geom_point(size = 1, alpha = 1) +
-    scale_color_gradient(low = "white", high = "black") +
+## plots method 1
+```{r}
+ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color = topic5_pred)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red") +  # Adjust the color gradient if needed
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+```
+
+
+#####Topic plot function 
+```{r}
+plottopic <- function(mean_result_sample, topic_pred){
+
+  ggplot(mean_result_sample, aes(x = centroidX, y = centroidY, color =mean_result_sample[[topic_pred]])) +
+    geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+    scale_color_gradient(low = "white", high = "red") +  # Adjust the color gradient if needed
     theme_minimal() +
-    labs(title = paste('Spatial Plot of Cells - Sample', sample_number), x = 'Centroid X', y = 'Centroid Y') +
+    labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
     theme(legend.position = "right")
-  
-  # Return a list with model summary, plot, and RMSE
-  return(list(model_summary = summary(TNBC_lmm_mean), error = error, plots = result_plot))
 }
-
-# Example of using the function
-# result <- topic_LMM_pred(mean_result, "1", "4") # Replace "1" with the actual topic number and "4" with the actual sample ID
-
 ```
 
 ```{r}
-topic_LMM_pred(mean_result, 1,4)
+mean_result_4 <- mean_result[mean_result$sample_id == '4', ]
+mean_result_12 <- mean_result[mean_result$sample_id == '12', ]
 
-topic_number=1
-sample_number=4
-
-
-
-topic_LMM_pred(mean_result, 2,4)$plot
-topic_LMM_pred(mean_result, 3,4)$plot
-topic_LMM_pred(mean_result, 4,4)$plot
-topic_LMM_pred(mean_result, 5,4)$plot
-```
-```{r}
-topic_LMM_pred(mean_result, 1,12)$plot
-topic_LMM_pred(mean_result, 2,12)$plot
-topic_LMM_pred(mean_result, 3,12)$plot
-topic_LMM_pred(mean_result, 4,12)$plot
-topic_LMM_pred(mean_result, 5,12)$plot
+topic2_s4 <- plottopic(mean_result_4,"topic2_pred")
+plottopic(mean_result_12,"topic5_pred")
 ```
 
-
+## plots method 2
+function for Linear mixed model on proportion of topics of mean result, output the plot
 ```{r}
 library(lme4)
 library(ggplot2)
@@ -189,7 +183,7 @@ topic_LMM_pred <- function(mean_result, topic_number, sample_number){
 
   result_plot <- ggplot(mean_result_sample, aes(x = centroidX, y = centroidY, color = get(topic_pred_col_name))) +
     geom_point(size = 1, alpha = 1) +
-    scale_color_gradient(low = "white", high = "black", limits = c(0, 1)) + # Ensuring the gradient covers 0-1 range
+    scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) + # Ensuring the gradient covers 0-1 range
     theme_minimal() +
     labs(title = paste('Spatial Plot of Cells - Sample', sample_number), x = 'Centroid X', y = 'Centroid Y') +
     theme(legend.position = "right")
@@ -207,7 +201,93 @@ topic_LMM_pred <- function(mean_result, topic_number, sample_number){
 
 ```
 
+```{r}
+topic_LMM_pred(mean_result, 1,4)$plot
+topic_LMM_pred(mean_result, 2,4)$plot
+topic_LMM_pred(mean_result, 3,4)$plot
+topic_LMM_pred(mean_result, 4,4)$plot
+topic_LMM_pred(mean_result, 5,4)$plot
+```
+```{r}
+topic_LMM_pred(mean_result, 1,12)$plot
+topic_LMM_pred(mean_result, 2,12)$plot
+topic_LMM_pred(mean_result, 3,12)$plot
+topic_LMM_pred(mean_result, 4,12)$plot
+topic_LMM_pred(mean_result, 5,12)$plot
+```
 
+
+## plots method 3 normalized
+```{r}
+mean_result$Topic_norm <- exp(mean_result$topic1_pred)+exp(mean_result$topic2_pred)+exp(mean_result$topic3_pred)+exp(mean_result$topic4_pred)+exp(mean_result$topic5_pred)
+
+mean_result$topic1_pred_norm <- exp(mean_result$topic1_pred)/mean_result$Topic_norm 
+mean_result$topic2_pred_norm <- exp(mean_result$topic2_pred)/mean_result$Topic_norm 
+mean_result$topic3_pred_norm <- exp(mean_result$topic3_pred)/mean_result$Topic_norm 
+mean_result$topic4_pred_norm <- exp(mean_result$topic4_pred)/mean_result$Topic_norm 
+mean_result$topic5_pred_norm <- exp(mean_result$topic5_pred)/mean_result$Topic_norm 
+
+mean_result_4 <- mean_result[mean_result$sample_id == '4', ]
+mean_result_12 <- mean_result[mean_result$sample_id == '12', ]
+```
+
+
+```{r}
+p_Lda_S4t1<- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color = topic1_pred_norm)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +  # Adjust the color gradient if needed
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+p_Lda_S4t2<- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color = topic2_pred_norm )) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +  # Adjust the color gradient if needed
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+p_Lda_S4t3<- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color = topic3_pred_norm )) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +  # Adjust the color gradient if needed
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+p_Lda_S4t4<- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color = topic4_pred_norm )) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +  # Adjust the color gradient if needed
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+p_Lda_S4t5<- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color = topic5_pred_norm )) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +  # Adjust the color gradient if needed
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+```
+
+```{r}
+p_Lda_S4t1
+p_Lda_S4t2
+p_Lda_S4t3
+p_Lda_S4t4
+p_Lda_S4t5
+```
+
+```{r}
+ggplot(mean_result_12, aes(x = centroidX, y = centroidY, color = topic5_pred_norm)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", 
+                       limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                       oob = scales::squish) +  # Squish values outside the range into the limits
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+```
 
 
 

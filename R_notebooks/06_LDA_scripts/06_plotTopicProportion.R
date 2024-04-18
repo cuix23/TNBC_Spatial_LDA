@@ -54,7 +54,7 @@ plotTopicProportion <- function(
     )
   )
   
-  sam = (colData(spe)[1:9]
+  sam = (colData(spe)[1:39]
          |> unique()
          |> data.frame()
   )

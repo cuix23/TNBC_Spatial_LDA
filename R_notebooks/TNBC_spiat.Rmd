@@ -155,14 +155,14 @@ colour_pal
 ```
 #Visulazing tissues
 ```{r}
-p1 <- plot_cell_categories(spe_object = spiat_sample_12,
+p2 <- plot_cell_categories(spe_object = spiat_sample_12,
                      categories_of_interest = unique(spiat_sample_12$Phenotype),
                       colour_vector = colour_pal,
                       # colour_vector = as.factor(Phenotypes),
                      feature_colname = "Phenotype") +
   #scale_color_manual(values = metadata(spiat_sample1)$color_vectors$phenotype) +
   ggtitle("")
-p1
+p2
 ```
 
 

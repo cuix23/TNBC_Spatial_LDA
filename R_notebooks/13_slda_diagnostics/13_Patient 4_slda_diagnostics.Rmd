@@ -1,0 +1,695 @@
+---
+title: "12_Spatial_LDA_patient_4"
+author: "Xinyue_Cui"
+date: "2024-03-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r , packages}
+library(rstan)
+library(dplyr)
+library(EBImage)
+library(ggplot2)
+library(spatstat)
+library(randomcoloR)
+library(SpatialExperiment)
+library(sp)
+library(tidyr)
+library(tibble)
+library(maptools)
+library(spdep)
+library(adespatial)
+```
+
+# Apply Spatial LDA for MULTI
+## Load the existing LDA estimations.
+```{r}
+file = "/Users/cuixinyue/Desktop/TNBC_analysis/Output/RData/Spatial_LDA_results/slda_lda_tile_4000_chain2_patient4.RData"
+
+load(file)
+fit_4.4 
+res_4<- rstan::extract(
+    fit_4.4 ,
+    permuted = TRUE,
+    inc_warmup = FALSE,
+    include = TRUE
+  )
+
+apply(res_4$theta[,3,], 2, median)
+dim(res_4$theta[,3,])
+```
+```{r}
+dim(res_4$theta[3001:4000,,])
+median(res_4$theta[,1,1]) # 0.0002692714
+median(res_4$theta[,1,2]) # 0.2375964
+median(res_4$theta[,1,3]) # 0.006216302
+median(res_4$theta[,1,4]) # 0.01350381
+median(res_4$theta[,1,5]) # 0.4735648
+dim(est_doc_topic_prop_lda)
+
+est_doc_topic_prop_lda[1,]/sum(est_doc_topic_prop_lda[1,])
+
+res_theta <- res_4$theta[3001:4000,,]
+```
+
+
+```{r}
+
+est_doc_topic_prop_lda <- apply(
+  res_theta, 
+  MARGIN = c(2, 3), 
+  median
+  )
+est_doc_top_lda <- paste0(
+  "topic",
+  max.col(est_doc_topic_prop_lda)
+  )
+
+df_doc_top_lda <- as.data.frame(est_doc_topic_prop_lda)
+df_doc_top_lda $tile <- seq_len(nrow(df_doc_top_lda ))
+df_doc_top_lda <- df_doc_top_lda %>%
+  rename(
+    topic1_slda = V1,
+    topic2_slda = V3,
+    topic3_slda = V5,
+    topic4_slda = V2,
+    topic5_slda = V4
+  )
+
+df_doc_top_lda$tile <- as.factor(df_doc_top_lda$tile)
+
+# Now try the join again
+S4_info_slda <- S4_info %>% left_join(df_doc_top_lda, by = c("tile_align" = "tile"))
+S4_info_slda
+
+```
+```{r normalized_theta_proportion}
+est_doc_topic_prop_lda <- apply(
+  res_theta, 
+  MARGIN = c(2, 3), 
+  median
+  )
+
+est_doc_topic_prop_slda <- array(dim=c(1000, 5))
+for (i in 1:tiles) {
+  est_doc_topic_prop_slda [i,] <-est_doc_topic_prop_lda[i,]/sum(est_doc_topic_prop_lda[i,])
+}
+
+est_doc_top_slda <- paste0(
+  "topic",
+  max.col(est_doc_topic_prop_slda)
+  )
+
+df_doc_top_slda <- as.data.frame(est_doc_topic_prop_slda)
+df_doc_top_slda $tile <- seq_len(nrow(df_doc_top_slda ))
+df_doc_top_slda <- df_doc_top_slda %>%
+  rename(
+    topic1_slda = V1,
+    topic2_slda = V3,
+    topic3_slda = V5,
+    topic4_slda = V2,
+    topic5_slda = V4
+  )
+
+df_doc_top_slda$tile <- as.factor(df_doc_top_slda$tile)
+
+# Now try the join again
+S4_info_slda_v2 <- S4_info %>% left_join(df_doc_top_slda, by = c("tile_align" = "tile"))
+S4_info_slda_v2 
+```
+
+## Spatial LDA topic plots
+#### Plot function for Spatial LDA
+
+```{r}
+topic_plot <- function(info_data, topicprop) {
+  p <- ggplot(info_data, aes_string(x = "centroidX", y = "centroidY", color = topicprop)) +  # use aes_string for variable names as strings
+    geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+    scale_color_gradient(low = "white", high = "red", 
+                         limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                         oob = scales::squish) +  # Squish values outside the range into the limits
+    theme_minimal() +
+    labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+    theme(legend.position = "right")  # Adjust legend position if needed
+
+  return(p)
+}
+```
+
+```{r}
+topic_plot(S4_info_slda_v2,"topic1_slda")
+topic_plot(S4_info_slda_v2,"topic2_slda")
+topic_plot(S4_info_slda_v2,"topic3_slda")
+topic_plot(S4_info_slda_v2,"topic4_slda")
+topic_plot(S4_info_slda_v2,"topic5_slda")
+```
+```{r}
+topic_plot(S4_info_slda,"topic1_slda")
+topic_plot(S4_info_slda,"topic2_slda")
+topic_plot(S4_info_slda,"topic3_slda")
+topic_plot(S4_info_slda,"topic4_slda")
+topic_plot(S4_info_slda,"topic5_slda")
+```
+
+
+## Topic Align
+```{r}
+slda_theta<- res_4$theta
+slda_phi<- res_4$phi
+dim(res_4$phi)
+dim(res_4$theta)
+```
+#### Alignment Matrix
+
+```{r}
+  theta = slda_theta
+  tile_long_doc = tiles_long_4
+  #cor_method = "cosine",
+  TileID_name = "tile_id"
+  K = 5
+  iter = 4000
+  chain = 2
+  warm_up_iter <- 3000
+
+ Chain <- Topic <- topic.dis <- NULL
+  # theta is a 3 dimensional array (iterations * samples * topic)
+  
+  # determine the iteration used in posterior sampling (subtract warm up iterations)
+  if (is.null(warm_up_iter)) {
+    iterUse = iter / 2
+  } else {
+    iterUse = iter - warm_up_iter
+  }
+  
+dimnames(theta)[[2]] <- unique(tile_long_doc$tile_id)
+  ## acquire topic number
+dimnames(theta)[[3]] <- c(paste0("Topic_", seq(1,K)))
+  theta_all = reshape2::melt(theta)
+  colnames(theta_all) = c("iteration", "Tile", "Topic", "topic.dis")
+  theta_all$Chain = paste0("Chain ", rep(seq(1, chain), each = (iterUse)))
+  
+  theta_all$Topic = factor(theta_all$Topic)
+  theta_all$Chain = factor(theta_all$Chain)
+  theta_all$Tile = as.character(theta_all$Tile)
+
+aligned <- matrix(nrow = K, ncol = chain)
+aligned[, 1] <- seq(1, K)
+corrTop <- numeric()
+
+  for(j in 1:K) { #Topic of first chain
+    chains <- lapply(as.list(1:chain), function(x){
+      for(top in 1:K){
+        corrTop[top] <- cor(
+          theta_all |> dplyr::filter(Chain == "Chain 1") |> dplyr::filter(Topic == paste0("Topic_", j)) |> dplyr::select(topic.dis),
+          theta_all |> dplyr::filter(Chain == paste0("Chain ",x)) |> dplyr::filter(Topic == paste0("Topic_", top)) |> dplyr::select(topic.dis))
+      }
+      return(which(corrTop == max(corrTop)))
+    })
+    
+    aligned[j, 2:chain] <- unlist(chains)[2:chain]
+  }
+
+aligned_matrix <- aligned
+```
+
+```{r}
+# aligned_matrix[5, 4] <- 3
+aligned_matrix
+```
+
+#### Align topic proportion
+
+We align the topic proportion in each specimen across four chains.
+```{r align-theta}
+  theta = slda_theta
+  tile_long_doc = tiles_long_4
+  
+ if (is.null(warm_up_iter)) {
+    iterUse = iter / 2
+  } else {
+    iterUse = iter - warm_up_iter
+  }
+theta <- aperm(theta, c(1,3,2))
+
+  theta_chain <- list()
+  theta_chain[[1]] <- theta[1:(iterUse), ,]
+  theta_chain[[1]] <- theta_chain[[1]][, aligned[,1],]
+  
+  theta_aligned <- theta_chain[[1]]
+
+  for(ch in 2:chain){
+    theta_chain[[ch]] <- theta[((ch-1)*(iterUse)+1):(ch*(iterUse)),,]
+    theta_chain[[ch]] <- theta_chain[[ch]][,aligned[,ch],]
+    
+    theta_aligned <- abind::abind(theta_aligned, theta_chain[[ch]], along = 1)
+  }
+
+  # theta_aligned <- abind(theta_chain[[1]], theta_chain[[2]], along = 1)
+  # for(ch in 3:chain){
+  #   theta_aligned <- abind(theta_aligned, theta_chain[[ch]], along = 1)
+  # }
+  # switch back samples and Topic dimension in array
+  theta_aligned <- aperm(theta_aligned, c(1,3,2))
+
+
+slda_theta_aligned <- theta_aligned 
+dim(slda_theta_aligned)
+```
+#### Align ASV proportion
+We align the ASVs proportion in each topic across four chains.
+```{r align-beta}
+# source(here::here("R_notebooks", "06_LDA_scripts", "06_betaAligned.R"))
+beta <- slda_phi
+
+ beta_chain <- list()
+  beta_chain[[1]] <- beta[1:(iterUse), ,]
+  beta_chain[[1]] <- beta_chain[[1]][, aligned[,1], ]
+  
+  beta_aligned <- beta_chain[[1]]
+
+  for(ch in 2:chain){
+    beta_chain[[ch]] <- beta[((ch-1)*(iterUse)+1):(ch*(iterUse)),,]
+    beta_chain[[ch]] <- beta_chain[[ch]][,aligned[,ch],]
+    
+    beta_aligned <- abind::abind(
+      beta_aligned,
+      beta_chain[[ch]],
+      along = 1)
+  }
+  
+slda_beta_aligned <- beta_aligned
+dim(slda_beta_aligned)
+```
+```{r}
+source(here::here("R_notebooks", 
+                  "06_LDA_scripts", "06_plotCellTypeDistribution.R"))
+K = 5
+p_cellTypeDist <- plotCellTypeDistribution(
+  spe = spe_4,
+  K = K,
+  beta_aligned = slda_beta_aligned,
+  col_names_beta_hat = c("iterations", "Topic", "Cell.Type", "beta_h")
+)
+
+p_cellTypeDist
+```
+
+### topic distribution in partitions
+```{r}
+median_first_dim <- apply(slda_theta_aligned, c(2, 3), median)
+dim(median_first_dim)
+```
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+median_long <- melt(median_first_dim)
+table(median_long$Var2)
+median_first_dim_df <- as.data.frame(median_first_dim)
+
+# Assuming your data is in a dataframe named 'median_first_dim_df' with proper column names
+
+# Install if necessary
+if(!require(knitr)) install.packages("knitr")
+library(knitr)
+
+# Use kable to create a simple table, you can specify the format you want, such as "html", "markdown", "latex", etc.
+kable_table <- kable(median_first_dim_df, format = "html", caption = "Median Proportions per Cell Type")
+
+# To display the table in R console or RStudio Viewer
+print(kable_table)
+
+# If you're working within an RMarkdown file, you'd simply include the kable line in a code chunk.
+
+
+```
+
+
+# Assuming you have the 'median_first_dim' matrix available in your R environment
+
+library(ggplot2)
+
+# Convert the matrix slice to a data frame for plotting
+data_to_plot <- data.frame(
+  Index = 1:nrow(median_first_dim),
+  MedianProportion = median_first_dim[, 1]  # This takes the first slice; change the 1 to another number for a different slice
+)
+
+# Create the bar plot
+ggplot(data_to_plot, aes(x = Index, y = MedianProportion)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Proportion Plot for the First Slice of median_first_dim",
+       x = "Index in Second Dimension",
+       y = "Median Proportion")
+
+ p <- ggplot2::ggplot(
+    median_first_dim,
+    ggplot2::aes(
+      x= Sample,
+      y = Topic)
+  )
+ 
+p <- p +
+    ggplot2::geom_tile(
+      ggplot2::aes(fill = median_first_dim)
+      #ggplot2::aes(alpha = median.topic.dis)
+    ) +
+    # ggplot2::facet_grid(
+    #   .~Sample,
+    #   scale = "free"
+    # ) +
+    ggplot2::ylab("Topic") + 
+    ggplot2::xlab("Partition") +
+    ggplot2::scale_fill_gradientn(name = "Median Topic \ndistribution",
+                                  colors = c("gray98", "#E69F00")) + 
+    # ggplot2::scale_fill_gradientn(
+    #   name = "Median Topic \ndistribution",
+    #   colours = c("#999999", "#0072B2")
+    # ) +
+    # ggplot2::scale_alpha(
+    #   name = "Median Topic \ndistribution"
+    # ) +
+    ggplot2::theme_classic(
+      base_size = 16
+    ) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(hjust = 0.5),
+      strip.text.x = ggplot2::element_text(angle = 90)
+    ) +
+    ggplot2::scale_x_discrete(guide = ggplot2::guide_axis(angle = 90))
+  p
+```
+
+```{r}
+spe = spe_4
+    theta_aligned
+    K=5
+    col_names_theta_all = c("iteration", "Sample", "Topic", "topic.dis")
+    chain = 2
+    warm_up_iter = 3000
+    iter = 4000
+    SampleID_name = "sample_id"
+    
+  Sample <- Topic <- pna <- topic.dis <- NULL
+  median.topic.dis <- median <- NULL
+  
+   if (is.null(warm_up_iter)) {
+    iterUse = iter / 2
+  } else {
+    iterUse = iter - warm_up_iter
+  }
+  
+
+dimnames(theta_aligned)[[2]] <- sort(unique(spe))
+dimnames(theta_aligned)[[3]] <- c(paste0("Topic_", seq(1,K)))
+```
+
+```{r plot-topic-prop, fig.width=20, fig.height=8}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_plotTopicProportion.R"))
+
+p_topicProp <- plotTopicProportion(
+  spe = spe_4,
+  theta_aligned = theta_aligned,
+  K = K,
+  iter = 4000,
+  warm_up_iter = 3000,
+  chain = 2,
+  SampleID_name = "sample_id"
+)
+p_topicProp + theme(
+  axis.title = element_text(size = 14),
+  axis.text = element_text(size = 14),
+  plot.title = element_text(size = 14))
+```
+## diagnostics
+
+#### R_hat and ESS
+
+```{r}
+source(here::here("R_notebooks", "06_LDA_scripts", "06_diagnosticsPlot.R"))
+
+p_list <-diagnosticsPlot(
+  theta_aligned = slda_theta_aligned ,
+  beta_aligned = slda_beta_aligned ,
+  warm_up_iter = 3000,
+  iter = 4000,
+  chain = 2
+) 
+
+p_list
+```
+
+```{r}
+slda_theta <- slda_theta_aligned
+slda_phi<- slda_beta_aligned
+# for theta
+ Rhat_theta <- matrix(
+    nrow = dim(slda_theta )[2],
+    ncol = dim(slda_theta)[3]
+  )
+  
+  ESS_bulk_theta <- matrix(
+    nrow = dim(slda_theta)[2],
+    ncol = dim(slda_theta)[3]
+  )
+  
+  for(sam in 1:dim(slda_theta)[2]){
+    for(top in 1:dim(slda_theta)[3]){
+      sims_theta <- matrix(
+        slda_theta[ ,sam , top],
+        nrow = (iterUse),
+        ncol = chain,
+        byrow = FALSE
+      )
+      Rhat_theta[sam, top] <- rstan::Rhat(sims_theta)
+      ESS_bulk_theta[sam, top] <- rstan::ess_bulk(sims_theta)
+    }
+    
+  }
+
+Rhat_theta <- as.vector(Rhat_theta)
+ESS_bulk_theta <- as.vector(ESS_bulk_theta)
+
+
+# For phi
+  
+  Rhat_phi <- matrix(
+    nrow = dim(slda_phi)[2],
+    ncol = dim(slda_phi)[3]
+  )
+  ESS_bulk_phi <- matrix(
+    nrow = dim(slda_phi)[2],
+    ncol = dim(slda_phi)[3]
+  )
+  
+  
+  for(top in 1:dim(slda_phi)[2]){
+    for(fea in 1:dim(slda_phi)[3]){
+      sims_phi <- matrix(
+        slda_phi[ , top, fea],
+        nrow = (iterUse),
+        ncol = chain,
+        byrow = FALSE)
+      Rhat_phi[top, fea] <- rstan::Rhat(sims_phi)
+      ESS_bulk_phi[top, fea] <- rstan::ess_bulk(sims_phi)
+      
+    }
+    
+  }
+  
+  Rhat_phi <- as.vector(Rhat_phi)
+  ESS_bulk_phi <- as.vector(ESS_bulk_phi)
+  
+
+# combine the R_hat and ESS_bulk
+Rhat <- c(Rhat_theta, Rhat_phi)
+ESS_bulk <- c(ESS_bulk_theta, ESS_bulk_phi)
+
+#plot for R_hat
+# R hat ~ 1.05
+  p_rhat <- ggplot2::ggplot(
+    data.frame(Rhat = Rhat)
+  ) +
+    ggplot2::geom_histogram(
+      aes(x = Rhat),
+      fill = "lavender",
+      colour = "black",
+      bins = 100
+    ) +
+    ggplot2::theme(
+      plot.title = element_text(hjust = 0.5)
+    )  +
+    ggplot2::theme_minimal(base_size = 20) +
+    ggplot2::xlab("")
+  
+  
+  
+  
+  # ESS bulk and ESS tail at least 100 per Markov Chain in order to be reliable and indicate that estimates of respective posterior quantiles are reliable
+  
+  p_ess_bulk <- ggplot2::ggplot(
+    data.frame(ESS_bulk = ESS_bulk)
+  ) +
+    ggplot2::geom_histogram(
+      aes(x = ESS_bulk),
+      fill = "lavender",
+      colour = "black",
+      bins = 100
+    ) +
+    ggplot2::theme(
+      plot.title = element_text(hjust = 0.5)
+    )   +
+    ggplot2::theme_minimal(
+      base_size = 20
+    ) +
+    ggplot2::xlab("")
+
+list(p_ess_bulk, p_rhat)
+```
+#### Traceplot
+```{r}
+
+```
+
+## model assesment
+#### dtm
+```{r}
+dtm <- as.data.frame.matrix(table(spe$sample_id, spe$mm)) %>% as.matrix()
+dtm <- as.matrix(table(spe$sample_id, spe$mm))
+dim(dtm)
+dim_names <- dimnames(dtm)
+col_names <- colnames(dtm)
+
+```
+#### sim
+```{r}
+dim(slda_beta_aligned)
+result_sim <- array(dim=c(2000, 1000, 16))
+
+slda_phi <-slda_beta_aligned
+slda_theta <- slda_theta_aligned
+tiles=1000
+# Perform the multiplication using a for loop for the dimensions
+for (i in 1:iterUse) {
+  for (j in 1:tiles) {
+    for (k in 1:16) {
+      # Multiply the corresponding elements and sum over the common dimension
+      result_sim [i, j, k] <- sum(slda_theta[i, j, ] * slda_phi[i, , k])
+    }
+  }
+}
+
+# Check the structure of the created 'sim' array
+dim(result_sim)
+result_sim <- result_sim*length(ppp_4$cluster)
+```
+#### Assemesent plot
+```{r}
+patient_id_index = 4
+cellTypeIndexToPlot = c(1:16)
+value <- Var2 <- NULL
+  
+  # determine the iteration used in posterior sampling (subtract warm up iterations)
+  if (is.null(warm_up_iter)) {
+    iterUse = iter / 2
+  } else {
+    iterUse = iter - warm_up_iter
+  }
+  
+  x <- dtm
+
+    x_cellCount <- data.frame(
+    Var1 = rep(
+      "x_mean_obs",
+      dim(x)[2]
+    ),
+    Var2 = colnames(x),
+    count = x[patient_id_index,] ## change here for different patient
+  )
+   x_cellCount <- x_cellCount[cellTypeIndexToPlot, ]
+  # draws from posterior predictive distribution
+  ### x_sim <- result$theta[1:iterUse, , ] # iteration * tissues * topics
+  mean_all <- apply(result_sim[1, , ], 2, mean)
+  for (i in 2:iterUse){
+    mean_x_sim_i <- apply(
+      result_sim[i, ,], 
+      2,
+      mean)
+    mean_all <- rbind(mean_all, mean_x_sim_i)
+  }
+  
+  rownames(mean_all) <- c(
+    paste0(
+      "x_mean_rep",
+      seq(1, iterUse)
+    )
+  )
+  
+  colnames(mean_all) <- colnames(x)
+  
+  mean_all <- mean_all[, cellTypeIndexToPlot]
+  mean_all_long <- reshape2::melt(mean_all)
+  
+  p_hist <- ggplot2::ggplot(
+    data = mean_all_long
+  ) +
+    ggplot2::geom_histogram(
+      aes(
+        x = value,
+        group = Var2
+      ),
+      color = "#0072B2",
+      fill = "#0072B2",
+      bins = 50) +
+    ggplot2::xlab("mean")+
+    
+    ggplot2::facet_wrap(~Var2, nrow = 4, scales = "free_x") +
+    
+    ggplot2::geom_vline(
+      data = x_cellCount,
+      aes(xintercept = count),
+      color = "#CC79A7"
+    ) +
+    ggplot2::theme_update(
+      text = element_text(size = 8)
+    )
+  
+p_hist 
+```
+#### Compare the RMSE
+```{r}
+mean_all_long_diff <- mean_all_long %>% left_join( x_cellCount, by = "Var2")
+mean_all_long_diff$diff <- (mean_all_long_diff$value - mean_all_long_diff$count)^2
+
+library(dplyr)
+
+# Assuming your data frame is named mean_all_long_diff
+sums_by_type <- mean_all_long_diff %>%
+  group_by(Var2) %>%
+  summarise(sum_diff = sum(diff))
+sums_by_type$sum_sqrt_slda <- sqrt(sums_by_type$sum_diff)
+sums_by_type
+
+
+# df_RMSE <- subset(sums_by_type, Var2 != "Other")
+```
+```{r}
+df_RMSE <- sums_by_type %>% left_join(sums_by_type_lda , by = "Var2")
+df_RMSE 
+p <- ggplot(df_RMSE, aes(x = sum_sqrt_lda.x, y = sum_sqrt_lda.y)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "blue") +
+  labs(x = "slda_RMSE", y = "lda_RMSE", title = "Scatter plot of model Assessment of Slda vs lda") +
+  theme_minimal()
+
+p
+```
+
+
+

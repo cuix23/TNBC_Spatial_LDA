@@ -1,0 +1,127 @@
+---
+title: "12_Spatial_LDA"
+author: "Xinyue_Cui"
+date: "2024-03-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+load(file = here::here("Output","RData","02_TNBC_spe_LC.rds"))
+spe
+```
+
+
+```{r}
+# we know the simulated data, so 
+# N = sum(unlist(lapply(word_counts, function(x){sum(x)})))
+N <- dim(tiles_long)[1]
+D <- length(unique(tiles_long$tile_id))
+types <- tiles_long$cell_type_id
+tiles <- tiles_long$tile_id
+K <- 5
+```
+
+```{r}
+tiles<-as.vector(tiles)
+tiles<-as.integer(tiles)
+type(tiles)
+is.vector(tiles)
+is.integer(tiles)
+
+readLines("/Users/cuixinyue/Desktop/TNBC_analysis/R_notebooks/slda.stan")
+```
+
+
+```{r}
+stan_data <- list(
+  D = D,
+  V = length(unique(types)),
+  K = K,
+  N = N,
+  words = types,
+  docs = tiles,
+  spatial_influence = spatial_influence
+)
+
+
+str(stan_data)
+```
+```{r}
+fit <- stan(
+  file = "/Users/cuixinyue/Desktop/TNBC_analysis/R_notebooks/slda.stan", 
+  data = stan_data, 
+  iter = 2000, 
+  chains = 1
+  )
+```
+```{r}
+result<- rstan::extract(
+    fit,
+    permuted = TRUE,
+    inc_warmup = FALSE,
+    include = TRUE
+  )
+
+apply(result$theta[,3,], 2, median)
+dim(result$theta[,3,])
+```
+
+```{r}
+est_doc_topic_prop_lda <- apply(
+  result$theta, 
+  MARGIN = c(2, 3), 
+  median
+  )
+est_doc_top_lda <- paste0(
+  "topic",
+  max.col(est_doc_topic_prop_lda)
+  )
+
+df_doc_top_lda <- as.data.frame(est_doc_topic_prop_lda)
+df_doc_top_lda $tile <- seq_len(nrow(df_doc_top_lda ))
+df_doc_top_lda <- df_doc_top_lda %>%
+  rename(
+    topic1_slda = V1,
+    topic2_slda = V2,
+    topic3_slda = V3,
+    topic4_slda = V4,
+    topic5_slda = V5
+  )
+
+df_doc_top_lda$tile <- as.factor(df_doc_top_lda$tile)
+
+# Now try the join again
+S4_info <- S4_info %>% left_join(df_doc_top_lda, by = c("tile_align" = "tile"))
+S4_info
+
+```
+
+```{r}
+save(fit, fit_lda, file = "/Users/cuixinyue/Desktop/TNBC_analysis/R_notebooks/slda_lda_5.RData")
+```
+
+```{r}
+ggplot(S4_info, aes(x = centroidX, y = centroidY, color = topic1_slda)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", 
+                       limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                       oob = scales::squish) +  # Squish values outside the range into the limits
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+```
+```{r}
+ggplot(S4_info, aes(x = centroidX, y = centroidY, color = topic5_slda)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", 
+                       limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                       oob = scales::squish) +  # Squish values outside the range into the limits
+  theme_minimal() +
+  labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+```
+

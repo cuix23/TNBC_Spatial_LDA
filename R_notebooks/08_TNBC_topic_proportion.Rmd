@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ### Library
 ```{r warning=FALSE, message=FALSE}
 #library(phyloseq)
+library(readr)
 library(dplyr)
 library(magrittr)
 library(ggplot2)
@@ -24,6 +25,14 @@ library(SpatialExperiment)
 ``` 
 
 ## Dataset
+## The dataset TNBC
+
+```{r}
+TNBC <- read_csv("/Users/cuixinyue/Desktop/TNBC_analysis/Data/MIBI-TNBC_count_output.csv")
+TNBC$sample_id <- as.factor(TNBC$sample_id )
+TNBC$STAGE <- as.factor(TNBC$STAGE)
+TNBC$mm <- as.factor(TNBC$mm)
+```
 Load the SPE object.
 ```{r}
 load(file = here::here("Output","RData","02_TNBC_spe_LC.rds"))
@@ -139,7 +148,7 @@ length(spa_list)
 spa_list[1]
 ```
 
-For the mean of beta
+# For the mean of beta
 ```{r}
 Cluster_prop_mean <- function(beta_hat) {
   iterations <- dim(beta_hat)[1]  # Number of iterations
@@ -178,23 +187,94 @@ print(mean_cluster_prop)
 
 
 ```{r}
+topics <- c('Topic_1', 'Topic_2', 'Topic_3', 'Topic_4', 'Topic_5')
+
+# Compute the 'topic_assign' by getting the column name of the max value in topics columns
+mean_cluster_prop $topic_assign <- apply(mean_cluster_prop[, topics], 1, function(x) names(which.max(x)))
+
 mean_result <-  cbind(TNBC, cell_id = dimnames(assay(spe))[[2]] ) %>%left_join(mean_cluster_prop, by = c("mm" = "cell_type"))
 ```
 ## For patient 4
+
 ```{r}
 mean_result_4 <- mean_result[mean_result$sample_id == '4', ]
+table(mean_result_4$Topic_1)
 
+P_lda_S4T1 <- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color =  Topic_1)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 1 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+ 
+P_lda_S4T2 <- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color =  Topic_2)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 2 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+ 
+P_lda_S4T3 <- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color =  Topic_3)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 3 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+ 
+P_lda_S4T4 <- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color =  Topic_4)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 4 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+ 
+P_lda_S4T5 <- ggplot(mean_result_4, aes(x = centroidX, y = centroidY, color =  Topic_5)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 5 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+ 
+```
+
+```{r}
+P_lda_S4T1
+P_lda_S4T2
+P_lda_S4T3
+P_lda_S4T4
+P_lda_S4T5
+```
+
+```{r}
 ggplot(mean_result_4 , aes(x = centroidX, y = centroidY, color = topic_assign)) +
   geom_point() +
   theme_minimal() +
   labs(x = "Centroid X", y = "Centroid Y", color = "Topic Assign") +
   theme(legend.position = "right")
 
+
 ```
 ## For patient 12
+###plot function
+```{r}
+topic_plot <- function(info_data, topicprop) {
+  p <- ggplot(info_data, aes_string(x = "centroidX", y = "centroidY", color = topicprop)) +  # use aes_string for variable names as strings
+    geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+    scale_color_gradient(low = "white", high = "red", 
+                         limits = c(0, 1),  # Ensure the limits are set from 0 to 1
+                         oob = scales::squish) +  # Squish values outside the range into the limits
+    theme_minimal() +
+    labs(title = 'Spatial Plot of Cells', x = 'Centroid X', y = 'Centroid Y') +
+    theme(legend.position = "right")  # Adjust legend position if needed
+
+  return(p)
+}
+```
+
 ```{r}
 mean_result_12 <- mean_result[mean_result$sample_id == '12', ]
 
+topic_plot ()
 ggplot(mean_result_12 , aes(x = centroidX, y = centroidY, color = topic_assign)) +
   geom_point() +
   theme_minimal() +
@@ -202,3 +282,49 @@ ggplot(mean_result_12 , aes(x = centroidX, y = centroidY, color = topic_assign))
   theme(legend.position = "right")
 
 ```
+```{r}
+P_lda_S12T1 <- ggplot(mean_result_12, aes(x = centroidX, y = centroidY, color =  Topic_1)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 1 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+ 
+P_lda_S12T2 <- ggplot(mean_result_12, aes(x = centroidX, y = centroidY, color =  Topic_2)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 2 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+ 
+P_lda_S12T3 <- ggplot(mean_result_12, aes(x = centroidX, y = centroidY, color =  Topic_3)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 3 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+ 
+P_lda_S12T4 <- ggplot(mean_result_12, aes(x = centroidX, y = centroidY, color =  Topic_4)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 4 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+ 
+P_lda_S12T5 <- ggplot(mean_result_12, aes(x = centroidX, y = centroidY, color =  Topic_5)) +
+  geom_point(size = 1, alpha = 1) +  # Adjust point size and transparency
+  scale_color_gradient(low = "white", high = "red", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = 'Topic 5 proportin', x = 'Centroid X', y = 'Centroid Y') +
+  theme(legend.position = "right")  # Adjust legend position if needed
+
+```
+
+```{r}
+P_lda_S12T1
+P_lda_S12T2
+P_lda_S12T3
+P_lda_S12T4
+P_lda_S12T5
+```
+

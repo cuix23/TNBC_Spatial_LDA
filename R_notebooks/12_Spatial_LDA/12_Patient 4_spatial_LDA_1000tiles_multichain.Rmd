@@ -1,7 +1,7 @@
 ---
-title: "Tiles_dataframe"
+title: "12_Spatial_LDA_patient_4"
 author: "Xinyue_Cui"
-date: "2024-03-18"
+date: "2024-03-24"
 output: html_document
 ---
 
@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r , packages}
 library(rstan)
 library(dplyr)
 library(EBImage)
@@ -24,13 +24,12 @@ library(maptools)
 library(spdep)
 library(adespatial)
 ```
-
+##spe
 ```{r}
 load(file = here::here("Output","RData","02_TNBC_spe_LC.rds"))
 spe
 ```
-
-
+##ppp_list
 ```{r}
 s_coor <- spatialCoords(spe) |>
   data.frame()
@@ -76,37 +75,38 @@ for (i in seq_along(sample_names)) {
 
 names(ppp_list) <- sample_names
 ```
-
+## tiles
 ```{r}
 set.seed(1234) 
 ppp_4<-ppp_list[[4]]
+ppp_12<-ppp_list[[11]]
 
-clusters <- kmeans(cbind(ppp_4$x, ppp_4$y), centers = 10)
-ppp_4$cluster <- as.factor(clusters$cluster)
-clusters
+clusters_4 <- kmeans(cbind(ppp_4$x, ppp_4$y), centers = 1000)
+ppp_4$cluster <- as.factor(clusters_4$cluster)
+# clusters_12
 ```
 
 ```{r}
 spe_4 <- spe[, spe$sample_id == "Sample_04"]
 spe_12 <- spe[, spe$sample_id == "Sample_12"]
-cell_tile <- data.frame(cell_id = dimnames(assay(spe_4))[[2]],
+cell_tile_4 <- data.frame(cell_id = dimnames(assay(spe_4))[[2]],
                         cell_type = spe_4$mm,
                         tile_align = ppp_4$cluster)
-cell_tile     
+cell_tile_4   
 ```
-
+## centroides of tiles
 ```{r}
 # Extract cluster centroids
-centroids <- aggregate(cbind(ppp_4$x, ppp_4$y), by=list(ppp_4$cluster), FUN=mean)
-centroids_ppp <- ppp(x=centroids$V1, y=centroids$V2, window=ppp_4$window)
+centroids_4 <- aggregate(cbind(ppp_4$x, ppp_4$y), by=list(ppp_4$cluster), FUN=mean)
+centroids_ppp_4 <- ppp(x=centroids_4$V1, y=centroids_4$V2, window=ppp_4$window)
 
-centroids_voronoi <- dirichlet(centroids_ppp)
+centroids_voronoi <- dirichlet(centroids_ppp_4)
 plot(centroids_voronoi)
 ```
 
 ```{r}
-tile_df  <- data.frame(tile = centroids$Group.1, x = centroids$V1, y = centroids$V2)
-tile_df 
+tile_df_4  <- data.frame(tile = centroids_4$Group.1, x = centroids_4$V1, y = centroids_4$V2)
+tile_df_4 
 ```
 
 ## cell id in each tile (document)
@@ -114,44 +114,54 @@ tile_df
 library(dplyr)
 library(purrr)
 # Group cell_id by 'tile_align' 
-cell_groups <- cell_tile %>%
+cell_groups <- cell_tile_4 %>%
   group_by(tile_align) %>%
   summarize(cells = list(cell_id)) %>%
   ungroup()
 
 # left Join the groups
-tile_df <- tile_df %>%
+tile_df_4 <- tile_df_4 %>%
   left_join(cell_groups, by = c("tile" = "tile_align"))
-tile_df 
+tile_df_4 
 ```
 
-# cell_type freqency table
+## cell_type freqency table
 ```{r}
 library(dplyr)
 
 cell_type_freq<- list()
 
-for (i in 1:10) {
-  cell_tile_sub <- cell_tile %>% filter(tile_align == i)
+for (i in 1:dim(tile_df_4)[1]) {
+  cell_tile_sub <- cell_tile_4 %>% filter(tile_align == i)
   cell_type_freq[[i]] <- table(cell_tile_sub$cell_type)
 }
 
 
-tile_df <- tile_df %>%
+tile_df_4 <- tile_df_4 %>%
   mutate(cell_type_count = cell_type_freq)
-tile_df
+tile_df_4
 ```
 
 
 ```{r}
-tile_df$cells[[1]]
+tile_df_4$cell_type_count[[1]]
 ```
 ## Create long data
 
 ```{r}
-tiles_long <- lapply(as.list(tile_df$tile), function(tile) {
-  words_vector <- names(tile_df$cell_type_count[[tile]])
-  counts_vector <- tile_df$cell_type_count[[tile]]
+cell_type_df <- data.frame(
+  mm = levels(TNBC$mm),
+  cell_type_id = seq_along(levels(TNBC$mm))
+) %>%
+  rename("cell_type"="mm")
+
+print(cell_type_df)
+```
+
+```{r}
+tiles_long_4 <- lapply(as.list(tile_df_4$tile), function(tile) {
+  words_vector <- names(tile_df_4$cell_type_count[[tile]])
+  counts_vector <- tile_df_4$cell_type_count[[tile]]
   
   # dataframe where each word is repeated according to its count
   data <- data.frame(
@@ -164,28 +174,25 @@ tiles_long <- lapply(as.list(tile_df$tile), function(tile) {
 }) %>%
   bind_rows()  # Combine all the individual dataframes into one
 
-dim(tiles_long)
+dim(tiles_long_4)
 ```
+
 ```{r}
-celltype_d <- tiles_long %>%
-  distinct(cell_type) %>%
-  mutate(cell_type_id = row_number()) 
-```
-```{r}
-tiles_long <- tiles_long %>%
-  left_join(celltype_d, by = "cell_type")
-tiles_long
+tiles_long_4 <- tiles_long_4 %>%
+  left_join(cell_type_df, by= "cell_type")
+tiles_long_4
 ```
 
 ## topic center in result of LDA
-
+In 08_TNBC_topic proportion, import the libraries, read the csv, run the left join to create mean_result.
 ```{r}
 # from 08_TNBC_topic_Proportion
 mean_result_4 <- mean_result[mean_result$sample_id == '4', ]
+mean_result_12 <- mean_result[mean_result$sample_id == '12', ]
 
 S4_info <- mean_result_4  %>%
   select(cell_id,centroidX, centroidY,topic_assign)
-S4_info <- S4_info %>% left_join(cell_tile, by = "cell_id")
+S4_info <- S4_info %>% left_join(cell_tile_4, by = "cell_id")
 S4_info
 ```
 
@@ -193,7 +200,7 @@ S4_info
 library(dplyr)
 
 # Calculate the mean of centroidX and centroidY for each topic
-topic_means <- mean_result_4 %>%
+topic_means_4 <- mean_result_4 %>%
   group_by(topic_assign) %>%
   summarize(
     mean_centroidX = mean(centroidX, na.rm = TRUE),
@@ -203,7 +210,6 @@ topic_means <- mean_result_4 %>%
 ```
 
 ## Compute spatial proximity
-
 
 ```{r}
 # topic_centers- use result from LDA 
@@ -224,14 +230,64 @@ calculate_influence <- function(
 }
 
 # apply calculate_influence to each document to create the spatial_influence matrix
-spatial_influence <- t(
-  sapply(1:nrow(tile_df), 
+spatial_influence_4 <- t(
+  sapply(1:nrow(tile_df_4), 
          function(i) {
-  calculate_influence(tile_df$x[i], tile_df$y[i], topic_means)
+  calculate_influence(tile_df_4$x[i], tile_df_4$y[i], topic_means_4)
 }
 )
 )
 
-head(spatial_influence)
+head(spatial_influence_4)
+sum(spatial_influence_4[1,])
+spatial_influence_4[1000,]
+```
+
+# Apply Spatial LDA for 4 chain for 1000 iterations (warmup = 500)
+## Apply Spatial LDA on patient 4
+```{r}
+# we know the simulated data, so 
+# # N = sum(unlist(lapply(word_counts, function(x){sum(x)})))
+# N <- dim(tiles_long_4)[1]
+# D <- length(unique(tiles_long_4$tile_id))
+# types <- tiles_long_4$cell_type_id
+# tiles <- tiles_long_4$tile_id
+# K <- 5
+```
+
+```{r}
+# tiles<-as.vector(tiles)
+# tiles<-as.integer(tiles)
+# type(tiles)
+# is.vector(tiles)
+# is.integer(tiles)
+
+```
+
+```{r}
+# stan_data_4 <- list(
+#   D = D,
+#   V = length(unique(types)),
+#   K = K,
+#   N = N,
+#   words = types,
+#   docs = tiles,
+#   spatial_influence = spatial_influence_4
+# )
+# 
+# str(stan_data_4)
+```
+
+```{r}
+# fit_4.4 <- stan(
+#   file = "/Users/cuixinyue/Desktop/TNBC_analysis/R_notebooks/slda.stan", 
+#   data = stan_data_4, 
+#   iter = 4000, 
+#   chains = 2
+#   )
+```
+
+```{r save_slda}
+# save(fit_4.4 , fit_4.4 , file = "/Users/cuixinyue/Desktop/TNBC_analysis/Output/RData/Spatial_LDA_results/slda_lda_tile_4000_chain2_patient4.RData")
 ```
 
